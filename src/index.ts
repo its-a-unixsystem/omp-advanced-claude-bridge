@@ -856,12 +856,12 @@ function reportResponse(
 	}
 }
 
-function bindResponseObserver(c: QueryContext, owner: BridgeSession | null, model: Model<any>, options?: SimpleStreamOptions) {
+function bindResponseObserver(c: QueryContext, model: Model<any>, options?: SimpleStreamOptions) {
 	const observe = options?.onResponse;
 	c.receiveResponse = observe && (response => reportResponse(observe, response, model, options?.signal));
-	if (owner?.pendingResponse && c.receiveResponse) {
-		const response = owner.pendingResponse;
-		owner.pendingResponse = undefined;
+	if (c.pendingResponse && c.receiveResponse) {
+		const response = c.pendingResponse;
+		c.pendingResponse = undefined;
 		c.receiveResponse(response);
 	}
 }
@@ -878,7 +878,6 @@ async function consumeQuery(
 	model: Model<any>,
 	queryCtx: QueryContext,
 	endOnToolUse: boolean,
-	owner: BridgeSession | null,
 ): Promise<void> {
 	for await (const message of sdkQuery) {
 		if (queryCtx.aborted) break;
@@ -892,7 +891,7 @@ async function consumeQuery(
 			if (notice) piUI?.notify(notice.message, notice.level);
 			const response = rateLimitResponse(info);
 			if (queryCtx.currentPiStream && queryCtx.receiveResponse) queryCtx.receiveResponse(response);
-			else if (owner && !owner.closed) owner.pendingResponse = response;
+			else queryCtx.pendingResponse = response;
 			continue;
 		}
 		if (message.type === "system" && message.subtype === "init") queryCtx.claudeSessionId = message.session_id;
@@ -953,14 +952,9 @@ function streamClaudeAgentSdk(
 
 	switch (request.kind) {
 		case "tool-results":
-			deliverToolResults(stream, model, context, request, owner, options);
+			deliverToolResults(stream, model, context, request, options);
 			break;
 		case "orphaned-result":
-			if (owner?.pendingResponse && options?.onResponse) {
-				const response = owner.pendingResponse;
-				owner.pendingResponse = undefined;
-				reportResponse(options.onResponse, response, model, options.signal);
-			}
 			finishOrphanedToolResult(stream, model);
 			break;
 		case "turn":
@@ -980,13 +974,12 @@ function deliverToolResults(
 	model: Model<any>,
 	context: Context,
 	{ query: resultCtx, results, steer }: Extract<RequestKind<QueryContext>, { kind: "tool-results" }>,
-	owner: BridgeSession | null,
 	options?: SimpleStreamOptions,
 ): void {
 	debugToolResults(context, results);
 	claimCurrentPiStream(stream, "tool-result", resultCtx);
 	resultCtx.resetTurnState(model);
-	bindResponseObserver(resultCtx, owner, model, options);
+	bindResponseObserver(resultCtx, model, options);
 	debug(`provider: tool results, ${results.length} results, ${resultCtx.pendingToolCalls.size} waiting handlers, ctx.msgs=${context.messages.length}`);
 	for (const result of results) {
 		const id = result.toolCallId;
@@ -1057,7 +1050,7 @@ function startProviderQuery(
 		failCurrentStream(queryCtx, "aborted", "Operation aborted");
 		return;
 	}
-	bindResponseObserver(queryCtx, owner, model, options);
+	bindResponseObserver(queryCtx, model, options);
 
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context, excludeToolName);
 	const cwd = options?.cwd ?? process.cwd();
@@ -1220,7 +1213,7 @@ function runProviderQuery(
 	else signal?.addEventListener("abort", forwardAbort, { once: true });
 
 	consumeAndReplay(sdkQuery, queryCtx, model, customToolNameToPi, queryOptions, helper,
-		(continuation) => { runningQuery = continuation; }, owner)
+		(continuation) => { runningQuery = continuation; })
 		.then(() => endQuery("done"), (error) => endQuery("error", error))
 		.finally(() => {
 			// Ephemeral helpers are deleted only once iteration has ended.
@@ -1242,10 +1235,9 @@ async function consumeAndReplay(
 	queryOptions: ProviderQueryOptions,
 	endOnToolUse: boolean,
 	setRunningQuery: (continuation: Query) => void,
-	owner: BridgeSession | null,
 ): Promise<void> {
 	try {
-		await consumeQuery(sdkQuery, customToolNameToPi, model, queryCtx, endOnToolUse, owner);
+		await consumeQuery(sdkQuery, customToolNameToPi, model, queryCtx, endOnToolUse);
 	} finally {
 		sdkQuery.close();
 	}
@@ -1264,7 +1256,7 @@ async function consumeAndReplay(
 		setRunningQuery(contQuery);
 		debug(`provider: continuation query, model=${queryOptions.extraArgs.model}, resume=${resumeId.slice(0, 8)}, prompt=${preview}`);
 		try {
-			await consumeQuery(contQuery, customToolNameToPi, model, queryCtx, false, owner);
+			await consumeQuery(contQuery, customToolNameToPi, model, queryCtx, false);
 		} finally {
 			contQuery.close();
 		}

@@ -38,6 +38,8 @@ function windowAbbreviation(name: string): string {
 		case "five_hour": return "5h";
 		case "seven_day": return "7d";
 		case "seven_day_overage_included": return "7d_oi";
+		case "seven_day_sonnet": return "7d_sonnet";
+		case "seven_day_opus": return "7d_opus";
 		default: return name;
 	}
 }
@@ -88,12 +90,12 @@ export function rateLimitNotice(
 	const selected = info?.rateLimitType ? info.unifiedWindows?.[info.rateLimitType] : undefined;
 	if (info?.status === "rejected") {
 		const overageReset = info.rateLimitType === "overage" ? resetSeconds(info.overageResetsAt) : undefined;
-		const seconds = overageReset ?? resetSeconds(info.resetsAt) ?? resetSeconds(selected?.resetsAt);
+		const seconds = overageReset ?? resetSeconds(selected?.resetsAt) ?? resetSeconds(info.resetsAt);
 		const resetsAt = seconds === undefined ? "unknown" : new Date(seconds * 1000).toLocaleTimeString();
 		return { message: `Claude rate limited (${info.rateLimitType ?? "unknown"}) — resets at ${resetsAt}`, level: "warning" };
 	}
 	if (info?.status === "allowed_warning") {
-		const fraction = info.utilization ?? selected?.utilization ?? 0;
+		const fraction = selected?.utilization ?? info.utilization ?? 0;
 		const utilization = Math.round(fraction * 100);
 		if (Number.isFinite(utilization) && utilization >= threshold) {
 			return { message: `Claude rate limit warning: ${utilization}% used (${info.rateLimitType ?? ""})`, level: "warning" };

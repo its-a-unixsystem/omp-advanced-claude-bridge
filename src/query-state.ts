@@ -27,6 +27,8 @@ export class QueryContext {
 	history: Context["messages"] = [];
 	replayedSteer = false;
 	receiveResponse?: (response: ProviderResponseMetadata) => void;
+	// A detached tool turn's metadata belongs to this query's continuation.
+	pendingResponse?: ProviderResponseMetadata;
 	pendingToolCalls = new Map<string, PendingToolCall>();
 	pendingResults = new Map<string, McpResult>();
 	turnToolCallIds: string[] = [];

@@ -261,13 +261,13 @@ Each OMP provider session keeps its own state in `providerSessionState` (managed
 
 ### Session history
 
-The bridge resumes the native Claude Code transcript while OMP's history and rendered system prompt still match. When you rewind, edit, or fork a session, the bridge can copy the unchanged prefix up to a point with no unanswered tool calls, preserving native records such as `@file` attachments. It then imports the changed suffix, including images. A system prompt change starts a fresh transcript from OMP history.
+The bridge resumes the native Claude Code transcript while OMP's history and rendered system prompt still match. When you rewind, edit, or fork a session, the bridge verifies the native transcript prefix before copying it up to a point with no unanswered tool calls. This preserves records such as `@file` attachments and imports the changed suffix, including images. A system prompt change or a failed prefix check rebuilds from OMP history.
 
 The bridge saves resume mappings for file-backed primary OMP sessions under `~/.omp/agent/advanced-claude-bridge/sessions/` (or under the active OMP agent directory) with file mode `0600`. Claude Code stores the transcripts in its own project directory. If the mapping is missing or corrupt, or its transcript is missing, the bridge rebuilds from OMP history. Subagents, `/btw` requests, and AskClaudeAdvanced do not write the primary session's mapping or transcript.
 
 ### Rate-limit metadata
 
-The bridge exposes Claude Code's rate-limit events as `anthropic-ratelimit-unified-*` headers through the provider response callback (`onResponse(response, model, signal)`), which OMP publishes as `after_provider_response`. Utilization stays fractional (`0.8` means 80%), and reset values are Unix seconds. The bridge delivers the latest event received between tool turns on the next provider call. OMP's built-in `/usage` does not use these headers for this custom provider.
+The bridge exposes Claude Code's rate-limit events as `anthropic-ratelimit-unified-*` headers through the provider response callback (`onResponse(response, model, signal)`), which OMP publishes as `after_provider_response`. Utilization stays fractional (`0.8` means 80%), and reset values are Unix seconds. The latest event received between tool turns goes to the continuation of the query that received it, not an unrelated request. OMP's built-in `/usage` does not use these headers for this custom provider.
 
 ## Debugging
 

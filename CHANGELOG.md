@@ -42,6 +42,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Isolated helper requests and AskClaudeAdvanced do not change the primary
   session's transcript or saved mapping.
 - Read SDK rate-limit utilization as a fraction and resets as Unix seconds.
+- Normalize model-specific rate-limit headers and keep buffered events with
+  the tool continuation that produced them.
+- Verify the native bytes of a retained history prefix before copying it.
+  On mismatch, rebuild from OMP history.
 - Overlapping turns no longer share a writable Claude Code transcript. An
   edited or removed final reply triggers a rebuild, and deferred steers
   preserve images when replayed.

@@ -103,7 +103,7 @@ describe("main agent", () => {
 		expect(claude.queries[0].isClosed).toBe(true);
 	});
 
-	test("late rate limits reach the next tool turn's response hook, not a side request", async () => {
+	test("late rate limits reach only the tool continuation that owns the query", async () => {
 		const main = agent("rate-main");
 		const late = Promise.withResolvers<void>();
 		const rate = (utilization: number) => ({
@@ -128,6 +128,7 @@ describe("main agent", () => {
 		const first: unknown[][] = [];
 		const next: unknown[][] = [];
 		const sideEvents: unknown[][] = [];
+		const overlappingEvents: unknown[][] = [];
 		const signal = new AbortController().signal;
 		const nextSignal = new AbortController().signal;
 		const prompt = user("use the tool");
@@ -138,6 +139,10 @@ describe("main agent", () => {
 		await run(agent("rate-main:side:1", main.states), [user("btw")], {
 			parentSessionId: main.sessionId, onResponse: (...args: unknown[]) => sideEvents.push(args),
 		});
+		claude.next(async function* (cc) { yield* cc.reply("independent turn"); });
+		await run(main, [user("another request")], {
+			onResponse: (...args: unknown[]) => overlappingEvents.push(args),
+		});
 		const reply = await run(main, [prompt, call, toolResult("toolu_rate", "found", "task")], {
 			signal: nextSignal, onResponse: (...args: unknown[]) => next.push(args),
 		});
@@ -147,9 +152,10 @@ describe("main agent", () => {
 		}) });
 		expect(first).toEqual([[response("0.25"), model, signal]]);
 		expect(sideEvents).toEqual([]);
+		expect(overlappingEvents).toEqual([]);
 		expect(next).toEqual([[response("0.91"), model, nextSignal], [response("0.76"), model, nextSignal]]);
 		expect(text(reply)).toBe("done");
-		expect(claude.queries).toHaveLength(2);
+		expect(claude.queries).toHaveLength(3);
 	});
 
 	test.each(["matching", "diverged"])("an overlapping turn with %s history uses a separate transcript", async (kind) => {

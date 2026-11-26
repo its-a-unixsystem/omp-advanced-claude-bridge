@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { bridgeSession } from "../src/bridge-session.ts";
 import { QueryContext } from "../src/query-state.ts";
+import { SessionStore } from "../src/session-store.ts";
 
 test("each provider sessionId owns its Claude Code session", () => {
 	const mainStates = new Map();
@@ -51,7 +56,8 @@ test("closing a session forgets its state", () => {
 	assert.notEqual(bridgeSession("closed", states), session);
 });
 
-const synced = { sessionId: "cc", cwd: "/repo", claudeDir: "/claude", promptDigest: "digest", digests: [], uuids: [], cuttable: [], stamp: null, tailUuid: null, dirty: false };
+const synced = { sessionId: "cc", cwd: "/repo", claudeDir: "/claude", promptDigest: "digest", digests: [], uuids: [], cuttable: [], cutDigests: [], stamp: null, tailUuid: null, dirty: false };
+
 test("only the latest writer can publish a transcript", () => {
 	const session = bridgeSession("overlap", new Map());
 	session.state = synced;
@@ -64,6 +70,33 @@ test("only the latest writer can publish a transcript", () => {
 	first.finish(null);
 	assert.equal(session.beginTranscript().state, newer);
 	session.close();
+});
+
+test("closing during overlapping turns retains the retired transcript as dirty", t => {
+	const directory = mkdtempSync(join(tmpdir(), "claude-bridge-lease-"));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const store = new SessionStore(directory);
+	const id = randomUUID();
+	const digest = "a".repeat(64);
+	const uuid = randomUUID();
+	const original = {
+		...synced, sessionId: randomUUID(), promptDigest: digest, tailUuid: uuid,
+		digests: [digest], uuids: [uuid], cuttable: [true], cutDigests: [digest],
+		stamp: { size: 10, mtimeMs: 1, ctimeMs: 1, digest },
+	};
+	store.save(id, original);
+	const owner = bridgeSession(id, new Map());
+	const first = owner.beginTranscript({ store });
+	assert.deepEqual(first.state, original);
+	const latest = owner.beginTranscript({ store });
+	assert.equal(latest.state, null);
+	owner.close();
+	first.finish(original);
+	latest.finish({ ...original, sessionId: randomUUID() });
+
+	const reopened = bridgeSession(id, new Map());
+	assert.deepEqual(reopened.beginTranscript({ store }).state, { ...original, dirty: true });
+	reopened.close();
 });
 
 test("closing a session aborts its queries, and a query that ends later writes nothing", () => {

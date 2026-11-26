@@ -16,14 +16,18 @@ function isState(value: unknown): value is SessionState {
 		&& typeof s.cwd === "string" && typeof s.claudeDir === "string"
 		&& typeof s.promptDigest === "string" && DIGEST.test(s.promptDigest)
 		&& typeof s.dirty === "boolean"
-		&& (s.tailUuid === null || typeof s.tailUuid === "string" && UUID.test(s.tailUuid))
+		&& typeof s.tailUuid === "string" && UUID.test(s.tailUuid)
 		&& !!s.stamp && Number.isSafeInteger(s.stamp.size) && s.stamp.size > 0
-		&& Number.isFinite(s.stamp.mtimeMs) && s.tailUuid !== null
-		&& Array.isArray(s.digests) && Array.isArray(s.uuids) && Array.isArray(s.cuttable)
+		&& Number.isFinite(s.stamp.mtimeMs) && Number.isFinite(s.stamp.ctimeMs)
+		&& typeof s.stamp.digest === "string" && DIGEST.test(s.stamp.digest)
+		&& Array.isArray(s.digests) && Array.isArray(s.uuids) && Array.isArray(s.cuttable) && Array.isArray(s.cutDigests)
 		&& s.uuids.length === s.digests.length && s.cuttable.length === s.digests.length
+		&& s.cutDigests.length === s.digests.length
 		&& s.digests.every((digest, i) => typeof digest === "string" && DIGEST.test(digest)
 			&& typeof s.cuttable![i] === "boolean" && (s.uuids![i] === null ? !s.cuttable![i]
-				: typeof s.uuids![i] === "string" && UUID.test(s.uuids![i]!)));
+				: typeof s.uuids![i] === "string" && UUID.test(s.uuids![i]!))
+			&& (s.cuttable![i] ? typeof s.cutDigests![i] === "string" && DIGEST.test(s.cutDigests![i]!)
+				: s.cutDigests![i] === null));
 }
 
 export class SessionStore {
@@ -45,7 +49,7 @@ export class SessionStore {
 		if (!UUID.test(id)) return null;
 		try {
 			const data = JSON.parse(readFileSync(join(this.directory, `${id}.json`), "utf8"));
-			return data?.version === 1 && isState(data.state) ? data.state : null;
+			return data?.version === 2 && isState(data.state) ? data.state : null;
 		} catch {
 			return null;
 		}
@@ -57,7 +61,7 @@ export class SessionStore {
 		const temp = `${path}.${randomUUID()}.tmp`;
 		try {
 			mkdirSync(this.directory, { recursive: true, mode: 0o700 });
-			writeFileSync(temp, JSON.stringify({ version: 1, state }), { flag: "wx", mode: 0o600 });
+			writeFileSync(temp, JSON.stringify({ version: 2, state }), { flag: "wx", mode: 0o600 });
 			renameSync(temp, path);
 		} catch (error) {
 			this.onError?.(error);

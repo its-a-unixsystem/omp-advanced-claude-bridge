@@ -21,6 +21,7 @@ test("allowed_warning can use the selected window but not a different window", (
 	const info = {
 		status: "allowed_warning",
 		rateLimitType: "seven_day",
+		utilization: 0.79,
 		unifiedWindows: {
 			five_hour: { utilization: 0.01 },
 			seven_day: { utilization: 0.874 },
@@ -30,7 +31,7 @@ test("allowed_warning can use the selected window but not a different window", (
 		message: "Claude rate limit warning: 87% used (seven_day)",
 		level: "warning",
 	});
-	assert.equal(rateLimitNotice({ ...info, rateLimitType: "five_hour" }), null);
+	assert.equal(rateLimitNotice({ ...info, utilization: 0.9, rateLimitType: "five_hour" }), null);
 });
 
 test("rejected always surfaces, regardless of utilization", () => {
@@ -110,7 +111,7 @@ test("unified window snapshots retain their own readings and abbreviations", () 
 			seven_day: { utilization: 0.25, resetsAt: 1783864800, status: "allowed" },
 			seven_day_overage_included: { utilization: 1.07, resetsAt: 1783864800, status: "rejected" },
 			seven_day_sonnet: { utilization: 0.56 },
-			seven_day_opus: undefined,
+			seven_day_opus: { utilization: 0.62, resetsAt: 1783864800 },
 		},
 	}), {
 		status: 200,
@@ -126,7 +127,9 @@ test("unified window snapshots retain their own readings and abbreviations", () 
 			"anthropic-ratelimit-unified-7d_oi-utilization": "1.07",
 			"anthropic-ratelimit-unified-7d_oi-reset": "1783864800",
 			"anthropic-ratelimit-unified-7d_oi-status": "rejected",
-			"anthropic-ratelimit-unified-seven_day_sonnet-utilization": "0.56",
+			"anthropic-ratelimit-unified-7d_sonnet-utilization": "0.56",
+			"anthropic-ratelimit-unified-7d_opus-utilization": "0.62",
+			"anthropic-ratelimit-unified-7d_opus-reset": "1783864800",
 		},
 	});
 });

@@ -2,7 +2,7 @@
 //
 // Extracted from index.ts so tests can import without activating the extension.
 
-import type { ProviderResponseMetadata, ProviderSessionState } from "@oh-my-pi/pi-ai";
+import type { ProviderSessionState } from "@oh-my-pi/pi-ai";
 import { PROVIDER_ID } from "./convert.js";
 import type { SessionState } from "./history-sync.js";
 import type { QueryContext } from "./query-state.js";
@@ -22,7 +22,6 @@ export class BridgeSession implements ProviderSessionState {
 	readonly queries = new Set<QueryContext>();
 	#writer?: symbol;
 	#releasePersistence?: () => void;
-	pendingResponse?: ProviderResponseMetadata;
 
 	constructor(readonly id?: string, private readonly states?: Map<string, ProviderSessionState>) {}
 
@@ -30,6 +29,9 @@ export class BridgeSession implements ProviderSessionState {
 	// and builds a separate transcript. Only the latest writer may publish
 	// its state, regardless of the order in which the turns finish.
 	beginTranscript(persistence?: { store: SessionStore; branchSource?: string }): TranscriptLease {
+		// The old query may still append to its transcript. Retire its disk
+		// mapping before giving the latest writer the persistence lease.
+		this.#releasePersistence?.();
 		const writer = Symbol();
 		const { store, branchSource } = persistence ?? {};
 		const id = this.id;
@@ -77,7 +79,6 @@ export class BridgeSession implements ProviderSessionState {
 		this.closed = true;
 		this.#writer = undefined;
 		this.state = null;
-		this.pendingResponse = undefined;
 		this.#releasePersistence?.();
 		this.#releasePersistence = undefined;
 		const key = this.id ? `${PROVIDER_ID}:${this.id}` : undefined;

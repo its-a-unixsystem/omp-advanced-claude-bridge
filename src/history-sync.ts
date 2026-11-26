@@ -3,7 +3,7 @@ import { closeSync, fstatSync, mkdirSync, openSync, readSync, statSync, writeFil
 import { dirname } from "node:path";
 import type { Context, Message } from "@oh-my-pi/pi-ai";
 import {
-	createSession, getClaudeDir, getSessionPath, normalizeProjectPath, parseJsonl, repairWithOrigin,
+	createSession, getClaudeDir, getSessionPath, normalizeProjectPath, repairWithOrigin,
 	serializeJsonl, Session, type AssistantRecord, type JsonlRecord, type ToolResultBlock, type UserContentBlock, type UserRecord,
 } from "cc-session-io";
 import { convertPiMessages, isPromptRole } from "./convert.js";
@@ -16,7 +16,9 @@ export interface SessionState {
 	digests: string[];
 	uuids: (string | null)[];
 	cuttable: boolean[];
-	stamp: { size: number; mtimeMs: number } | null;
+	// The rolling JSONL fingerprint at each cuttable UUID, including attachments.
+	cutDigests: (string | null)[];
+	stamp: { size: number; mtimeMs: number; ctimeMs: number; digest: string } | null;
 	tailUuid: string | null;
 	// An interrupted or unmatched turn may only be forked, never resumed as-is.
 	dirty: boolean;
@@ -27,6 +29,15 @@ export interface SessionState {
 const replies = new WeakMap<SessionState, { index: number; timestamp: number }>();
 
 type TranscriptRecord = JsonlRecord & { uuid: string; parentUuid: string | null };
+
+const EMPTY_DIGEST = "0".repeat(64);
+const READ_CHUNK_SIZE = 64 * 1024;
+
+// Chaining complete lines lets a newly appended turn extend the disk proof
+// without re-reading the transcript or serializing a hash implementation's state.
+function extendDigest(previous: string, line: Buffer): string {
+	return createHash("sha256").update(previous).update(line).digest("hex");
+}
 
 function digestMessage(message: Message): string {
 	const { role, content } = message;
@@ -110,57 +121,73 @@ function transcriptPath(state: SessionState) {
 	return getSessionPath(state.sessionId, state.cwd, state.claudeDir);
 }
 
-function stamp(path: string): SessionState["stamp"] {
+function fileStamp(path: string) {
 	try {
-		const { size, mtimeMs } = statSync(path);
-		return { size, mtimeMs };
+		const { size, mtimeMs, ctimeMs } = statSync(path);
+		return { size, mtimeMs, ctimeMs };
 	} catch {
 		return null;
 	}
 }
 
-// Read only query-appended bytes when recording, and only the proven byte range
-// when forking. Stop parsing at the requested UUID: a late/corrupt tail is not
-// part of the fork.
-function readRecords(path: string, offset: number, cut?: { uuid: string; size: number }) {
-	const fd = openSync(path, "r");
-	try {
-		const { size, mtimeMs } = fstatSync(fd);
-		const endOffset = cut ? Math.min(size, cut.size) : size;
-		if (endOffset < offset) throw new Error("Claude Code transcript was truncated");
-		const bytes = Buffer.allocUnsafe(endOffset - offset);
-		for (let done = 0; done < bytes.length;) {
-			const count = readSync(fd, bytes, done, bytes.length - done, offset + done);
-			if (!count) throw new Error("Claude Code transcript ended mid-read");
-			done += count;
-		}
-		let records: JsonlRecord[];
-		if (!cut) {
-			if (bytes.length && bytes[bytes.length - 1] !== 10) throw new Error("Incomplete Claude Code transcript line");
-			records = parseJsonl(bytes.toString("utf8"));
-		} else {
-			records = [];
-			for (let start = 0; start < bytes.length;) {
-				const end = bytes.indexOf(10, start);
-				if (end === -1) break;
-				const [record] = parseJsonl(bytes.toString("utf8", start, end));
-				start = end + 1;
-				if (!record) continue;
-				records.push(record);
-				if (record.uuid === cut.uuid) break;
+function* readLines(fd: number, offset: number, limit: number): IterableIterator<Buffer> {
+	const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_SIZE, limit - offset));
+	let parts: Buffer[] = [];
+	while (offset < limit) {
+		const count = readSync(fd, buffer, 0, Math.min(buffer.length, limit - offset), offset);
+		if (!count) throw new Error("Claude Code transcript ended mid-read");
+		offset += count;
+		const chunk = buffer.subarray(0, count);
+		let start = 0;
+		for (let end: number; (end = chunk.indexOf(10, start)) !== -1; start = end + 1) {
+			const line = chunk.subarray(start, end + 1);
+			if (!parts.length) yield line;
+			else {
+				parts.push(line);
+				yield Buffer.concat(parts);
+				parts = [];
 			}
 		}
-		return { records, stamp: { size, mtimeMs } };
+		// The read buffer will be reused; only a line spanning chunks needs a copy.
+		if (start < count) parts.push(Buffer.from(chunk.subarray(start)));
+	}
+	if (parts.length) throw new Error("Incomplete Claude Code transcript line");
+}
+
+// Read appended bytes for a live turn, or stop at the cut UUID within the
+// recorded byte range for a fork. Fingerprint the raw bytes before parsing.
+function readRecords(path: string, offset = 0, digest = EMPTY_DIGEST, cut?: { uuid: string; size: number }) {
+	const fd = openSync(path, "r");
+	try {
+		const { size, mtimeMs, ctimeMs } = fstatSync(fd);
+		const limit = cut ? Math.min(size, cut.size) : size;
+		if (limit < offset) throw new Error("Claude Code transcript was truncated");
+		const records: JsonlRecord[] = [];
+		const proofs = new Map<string, string>();
+		for (const line of readLines(fd, offset, limit)) {
+			digest = extendDigest(digest, line);
+			const text = line.toString("utf8", 0, line.length - 1);
+			if (!text.trim()) continue;
+			const record = JSON.parse(text) as JsonlRecord;
+			records.push(record);
+			if (cut) {
+				if (record.uuid === cut.uuid) break;
+			} else if (typeof record.uuid === "string") proofs.set(record.uuid, digest);
+		}
+		return { records, proofs, stamp: { size, mtimeMs, ctimeMs, digest } };
 	} finally {
 		closeSync(fd);
 	}
 }
 
-function forkPrefix(source: SessionState, cut: string): TranscriptRecord[] | null {
-	if (!source.stamp) return null;
+function forkPrefix(source: SessionState, cutIndex: number): TranscriptRecord[] | null {
+	const uuid = source.uuids[cutIndex];
+	const expected = source.cutDigests[cutIndex];
+	if (!source.stamp || !uuid || !expected) return null;
 	try {
-		const { records } = readRecords(transcriptPath(source), 0, { uuid: cut, size: source.stamp.size });
-		const chain = transcriptChain(records, source.sessionId, null, cut);
+		const { records, stamp } = readRecords(transcriptPath(source), 0, EMPTY_DIGEST, { uuid, size: source.stamp.size });
+		if (stamp.digest !== expected) return null;
+		const chain = transcriptChain(records, source.sessionId, null, uuid);
 		const tip = chain?.at(-1);
 		if (tip && isWritable(tip)) return chain;
 	} catch {
@@ -240,8 +267,25 @@ function writeTranscript(target: Session, keptRecords: number, state: SessionSta
 	let time = Math.max(floor + 1, Date.now() - (records.length - keptRecords) + 1);
 	for (let i = keptRecords; i < records.length; i++) records[i].timestamp = new Date(time++).toISOString();
 	mkdirSync(dirname(target.jsonlPath), { recursive: true });
-	writeFileSync(target.jsonlPath, serializeJsonl(records as JsonlRecord[]), { flag: "wx", mode: 0o600 });
-	state.stamp = stamp(target.jsonlPath);
+	const bytes = Buffer.from(serializeJsonl(records as JsonlRecord[]), "utf8");
+	writeFileSync(target.jsonlPath, bytes, { flag: "wx", mode: 0o600 });
+
+	// Match the serializer's single line per record without parsing the data
+	// we just wrote. A fork changes session IDs, so its cut proofs are new.
+	const proofs = new Map<string, string>();
+	let digest = EMPTY_DIGEST;
+	let start = 0;
+	for (const record of records) {
+		const end = bytes.indexOf(10, start) + 1;
+		digest = extendDigest(digest, bytes.subarray(start, end));
+		if (typeof record.uuid === "string") proofs.set(record.uuid, digest);
+		start = end;
+	}
+	for (let i = 0; i < state.uuids.length; i++) {
+		if (state.cuttable[i]) state.cutDigests[i] = proofs.get(state.uuids[i]!)!;
+	}
+	const stamp = fileStamp(target.jsonlPath);
+	if (stamp?.size === bytes.length) state.stamp = { ...stamp, digest };
 	onWrite?.(target.jsonlPath, state.sessionId, records.length, state.cwd);
 }
 
@@ -256,8 +300,9 @@ export function syncHistory(
 	const source = previous?.cwd === cwd && previous.claudeDir === claudeDir && previous.promptDigest === promptDigest ? previous : null;
 	let kept = source ? commonPrefix(digests, priors, source) : 0;
 	if (source && !source.dirty && source.stamp && source.tailUuid && kept === digests.length && kept === source.digests.length) {
-		const current = stamp(transcriptPath(source));
-		if (current?.size === source.stamp.size && current.mtimeMs === source.stamp.mtimeMs) return source;
+		const current = fileStamp(transcriptPath(source));
+		if (current?.size === source.stamp.size && current.mtimeMs === source.stamp.mtimeMs
+			&& current.ctimeMs === source.stamp.ctimeMs) return source;
 	}
 
 	const fresh = createSession({ projectPath: cwd, claudeDir, model });
@@ -265,8 +310,7 @@ export function syncHistory(
 	let keptRecords = 0;
 	if (source) {
 		while (kept > 0 && !source.cuttable[kept - 1]) kept--;
-		const cut = source.uuids[kept - 1];
-		const prefix = cut ? forkPrefix(source, cut) : null;
+		const prefix = kept ? forkPrefix(source, kept - 1) : null;
 		if (prefix) {
 			for (const record of prefix) record.sessionId = fresh.sessionId;
 			keptRecords = prefix.length;
@@ -278,6 +322,7 @@ export function syncHistory(
 	const state: SessionState = {
 		sessionId: fresh.sessionId, cwd, claudeDir, promptDigest, digests,
 		uuids: source?.uuids.slice(0, kept) ?? [], cuttable: source?.cuttable.slice(0, kept) ?? [],
+		cutDigests: new Array(digests.length).fill(null),
 		stamp: null, tailUuid: kept ? source!.uuids[kept - 1] : null, dirty: false,
 	};
 	importSuffix(target, kept ? priors.slice(kept) : priors, state, names);
@@ -306,13 +351,17 @@ function assistantMatches(records: AssistantRecord[], assistant: Extract<Message
 
 /** Align the committed OMP turn with native records, stopping at the first unproven slot. */
 export function recordTurn(base: SessionState, promptUuid: string, messages: Context["messages"], clean: boolean): SessionState {
-	const state = { ...base, digests: [...base.digests], uuids: [...base.uuids], cuttable: [...base.cuttable], dirty: true };
+	const state = {
+		...base, digests: [...base.digests], uuids: [...base.uuids], cuttable: [...base.cuttable], cutDigests: [...base.cutDigests], dirty: true,
+	};
 	const previousReply = replies.get(base);
 	if (previousReply) replies.set(state, previousReply);
 	try {
-		const tail = readRecords(transcriptPath(base), base.stamp?.size ?? 0);
+		const tail = readRecords(transcriptPath(base), base.stamp?.size, base.stamp?.digest);
 		const chain = transcriptChain(tail.records, base.sessionId, base.tailUuid);
 		if (!chain) return state;
+		state.stamp = tail.stamp;
+		state.tailUuid = chain.at(-1)?.uuid ?? base.tailUuid;
 		const visible = chain.flatMap((record, index) => isAssistant(record) || isUser(record) && (!record.isMeta || record.uuid === promptUuid)
 			? [{ record, index }] : []);
 		const pending = new Set<string>();
@@ -328,11 +377,14 @@ export function recordTurn(base: SessionState, promptUuid: string, messages: Con
 				end++;
 			}
 			state.digests.push(digestMessage(message));
-			state.uuids.push(chain[end].uuid);
-			state.cuttable.push(allowCut && pending.size === 0);
+			const uuid = chain[end].uuid;
+			const cuttable = allowCut && pending.size === 0;
+			state.uuids.push(uuid);
+			state.cuttable.push(cuttable);
+			state.cutDigests.push(cuttable ? tail.proofs.get(uuid)! : null);
 			mapped++;
 		};
-		while (mapped < messages.length && next < visible.length) {
+		align: while (mapped < messages.length && next < visible.length) {
 			const message = messages[mapped];
 			const start = visible[next];
 			if (mapped === 0) {
@@ -359,7 +411,7 @@ export function recordTurn(base: SessionState, promptUuid: string, messages: Con
 					if (!isUser(item) || !Array.isArray(item.message.content)
 						|| !item.message.content.length || !item.message.content.every(block => block.type === "tool_result")) break;
 					for (const block of item.message.content) {
-						if (ids.has(block.tool_use_id)) return state;
+						if (ids.has(block.tool_use_id)) break align;
 						ids.add(block.tool_use_id);
 					}
 				}
@@ -376,15 +428,13 @@ export function recordTurn(base: SessionState, promptUuid: string, messages: Con
 				next = end;
 			} else break;
 		}
-		state.stamp = tail.stamp;
-		state.tailUuid = chain.at(-1)?.uuid ?? base.tailUuid;
 		state.dirty = !clean || mapped !== messages.length || next !== visible.length || pending.size !== 0;
 		const reply = messages[mapped - 1];
 		if (reply?.role === "assistant" && !state.dirty) {
 			replies.set(state, { index: state.digests.length - 1, timestamp: reply.timestamp });
 		}
 	} catch {
-		// Keep the previously proven prefix if the native tail is unreadable.
+		// Already mapped slots remain usable; the full transcript stays dirty.
 	}
 	return state;
 }

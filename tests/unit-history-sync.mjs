@@ -105,6 +105,33 @@ test("native continuation proves its live reply and keeps attachments when branc
 	assert.equal(open(changedPrompt).attachments.length, 0);
 });
 
+test("forks verify the retained native bytes but ignore changes after the cut", t => {
+	const { cwd, path, open } = fixture(t);
+	const base = syncHistory(null, [], cwd, prompt);
+	const first = user(`keep A: ${"漢".repeat(26_000)}`);
+	const reply = assistant(text("old answer"));
+	const attachment = { type: "file", filename: "data.txt", content: "native data" };
+	const native = [
+		{ type: "user", uuid: randomUUID(), message: { role: "user", content: first.content } },
+		{ type: "attachment", uuid: randomUUID(), attachment },
+		{ type: "assistant", uuid: randomUUID(), message: { id: "answer", content: [text("old answer")] } },
+	];
+	const source = path(base);
+	appendNative(source, base, native);
+	const saved = JSON.parse(JSON.stringify(recordTurn(base, native[0].uuid, [first, reply], true)));
+	const bytes = readFileSync(source, "utf8");
+	writeFileSync(source, bytes.replace("old answer", "new answer"));
+	const fork = syncHistory(saved, [first], cwd, prompt);
+	assert.deepEqual(open(fork).attachments.map(row => row.uuid), [native[1].uuid]);
+
+	writeFileSync(source, bytes.replace("keep A", "keep B"));
+	const rebuilt = syncHistory(saved, [first, reply], cwd, prompt);
+	const transcript = open(rebuilt);
+	assert.equal(transcript.messages[0].message.content, first.content);
+	assert.notEqual(transcript.messages[0].uuid, native[0].uuid);
+	assert.equal(transcript.attachments.length, 0);
+});
+
 test("pruning or editing a tool batch rewrites it from the last safe cut", t => {
 	const { cwd, path, open } = fixture(t);
 	const first = user("read two files");
@@ -211,6 +238,28 @@ test("native split assistant responses and result batches align, but an unmatche
 	const fork = syncHistory(dirty, [user("prior turn"), assistant(text("yes"))], cwd, prompt);
 	assert.notEqual(fork.sessionId, base.sessionId);
 	assert.deepEqual(open(fork).messages.map(record => record.uuid), base.uuids);
+});
+
+test("a duplicate native tool result still leaves the new prompt and its attachment forkable", t => {
+	const { cwd, path, open } = fixture(t);
+	const prior = user("prior turn");
+	const base = syncHistory(null, [prior], cwd, prompt);
+	const first = user("build @data.txt");
+	const use = { type: "tool_use", id: "a", name: "Bash", input: {} };
+	const output = { type: "tool_result", tool_use_id: "a", content: "built" };
+	const native = [
+		{ type: "user", uuid: randomUUID(), message: { role: "user", content: first.content } },
+		{ type: "attachment", uuid: randomUUID(), attachment: { type: "file", filename: "data.txt", content: "native data" } },
+		{ type: "assistant", uuid: randomUUID(), message: { id: "tools", content: [use] } },
+		{ type: "user", uuid: randomUUID(), message: { role: "user", content: [output, output] } },
+	];
+	appendNative(path(base), base, native);
+	const recorded = recordTurn(base, native[0].uuid, [first, assistant(call("a")), result("a", "built")], true);
+	assert.equal(recorded.dirty, true);
+	const fork = syncHistory(recorded, [prior, first], cwd, prompt);
+	assert.notEqual(fork.sessionId, base.sessionId);
+	assert.deepEqual(open(fork).messages.map(row => row.uuid), [base.uuids[0], native[0].uuid]);
+	assert.deepEqual(open(fork).attachments.map(row => row.uuid), [native[1].uuid]);
 });
 
 test("missing or unreadable transcripts are rebuilt from OMP history", t => {
