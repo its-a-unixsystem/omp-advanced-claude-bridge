@@ -49,7 +49,9 @@ test("the fork reads only its own project configuration", () => {
 
 test("shared mode imports the conversation and resumes it", async () => {
 	const history = [user("what does this repo do?"), assistant("It bridges Claude Code into OMP.")];
-	claude.next(async function* (cc) { yield* cc.reply("It is an OMP extension."); });
+	claude.next(async function* (cc) {
+		yield cc.query.assistant("msg_ask_shared", [{ type: "text", text: "It is an OMP extension." }], "end_turn");
+	});
 	const result = await ask({ prompt: "second opinion?" }, toolContext("ask-shared", history));
 
 	expect(result.details.error).toBeUndefined();

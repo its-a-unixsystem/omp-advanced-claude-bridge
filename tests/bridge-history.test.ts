@@ -5,8 +5,11 @@
 // turn each one into a plain `test`.
 
 import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { CompactionPreparation } from "@oh-my-pi/pi-agent-core/compaction";
 import {
-	agent, assistant, claude, createdSince, emit, historyOf, resetHarness, run, sessionCalls, sessionState, transcriptOf, user,
+	agent, assistant, claude, createdSince, cwd, emit, extensionContext, historyOf, resetHarness, run, sessionCalls, sessionState, text, transcriptOf, user,
 	type Agent,
 } from "./harness/bridge.ts";
 
@@ -36,6 +39,59 @@ test("an existing conversation keeps signed thinking from the old provider ID", 
 	};
 	await turn(main, [user("Which option?"), prior], "Continue.", "Next step.");
 	expect(transcriptOf(sessionState(main).sessionId)).toContain("assistant: thinking old-signature");
+});
+
+test("the provider forwards instructions from the request project's nearest parent", async () => {
+	const project = mkdtempSync(join(cwd, "instructions-"));
+	try {
+		const requestCwd = join(project, "nested");
+		mkdirSync(requestCwd);
+		writeFileSync(join(project, "AGENTS.md"), "Project rule: inspect this workspace first.\n");
+		claude.next(async function* (cc) { yield* cc.reply("Understood."); });
+
+		const reply = await run(agent("request-cwd"), [user("Read the project instructions.")], { cwd: requestCwd });
+		expect(text(reply)).toBe("Understood.");
+		expect(claude.queries[0].options.systemPrompt.append).toBe("# CLAUDE.md\n\nProject rule: inspect this workspace first.");
+	} finally {
+		rmSync(project, { recursive: true, force: true });
+	}
+});
+
+test("the compact hook summarizes in isolated queries and preserves earlier file operations", async () => {
+	const preparation = {
+		firstKeptEntryId: "keep",
+		messagesToSummarize: [{ ...user("We migrated the parser."), role: "user" }],
+		turnPrefixMessages: [],
+		recentMessages: [],
+		isSplitTurn: false,
+		tokensBefore: 250,
+		fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
+		settings: { enabled: true, keepRecentTokens: 100, remoteEnabled: false },
+	} satisfies CompactionPreparation;
+	const event = {
+		preparation,
+		branchEntries: [{ type: "compaction", details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] } }],
+		customInstructions: "Keep migration decisions.",
+	};
+	const ctx = extensionContext();
+	expect(await emit("session_before_compact", event, { ...ctx, model: { ...ctx.model, provider: "anthropic" } }))
+		.toEqual([undefined]);
+	expect(claude.queries).toHaveLength(0);
+
+	claude.next(async function* (cc) { yield* cc.reply("The parser migration is complete."); });
+	claude.next(async function* (cc) { yield* cc.reply("Parser migration"); });
+	expect(await emit("session_before_compact", event, ctx)).toEqual([{
+		compaction: expect.objectContaining({
+			summary: expect.stringContaining("The parser migration is complete."),
+			firstKeptEntryId: "keep",
+			tokensBefore: 250,
+			details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] },
+		}),
+	}]);
+	expect(claude.queries[0].prompt).toContain("We migrated the parser.");
+	expect(claude.queries[0].prompt).toContain("Keep migration decisions.");
+	expect(claude.queries.every(({ options }) => options.persistSession === false && options.resume === undefined)).toBe(true);
+	expect(createdSince(0)).toEqual([]);
 });
 
 test("after compaction the next turn rebuilds the session in place from the compacted history", async () => {

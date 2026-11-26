@@ -425,7 +425,7 @@ function verifyWrittenSession(
 		piUI?.notify(
 			`Session file issue: ${msg}\n` +
 			`cwd=${cwd} realpath=${safeRealpath(cwd)} CLAUDE_CONFIG_DIR=${process.env.CLAUDE_CONFIG_DIR ?? "(unset)"}\n` +
-			`Please copy and paste this message into a new issue at https://github.com/elidickinson/pi-claude-bridge/issues/new` +
+			`Please copy and paste this message into a new issue at https://github.com/its-a-unixsystem/omp-advanced-claude-bridge/issues/new` +
 			(DEBUG ? ` and attach ${DEBUG_LOG_PATH}` : ` (rerun with CLAUDE_BRIDGE_DEBUG=1 to capture a debug log)`),
 			"warning",
 		);
@@ -1155,7 +1155,7 @@ function buildProviderQueryOptions(
 	resumeSessionId: string | null,
 ) {
 	const appendSystemPrompt = providerSettings.appendSystemPrompt !== false;
-	const agentsAppend = appendSystemPrompt ? extractAgentsAppend() : undefined;
+	const agentsAppend = appendSystemPrompt ? extractAgentsAppend(cwd) : undefined;
 	const skillsAppend = appendSystemPrompt ? extractSkillsBlock(systemPromptText(systemPrompt)) : undefined;
 	const appendParts = [agentsAppend, skillsAppend].filter((part): part is string => Boolean(part));
 	const systemPromptAppend = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
@@ -1331,7 +1331,6 @@ async function promptAndWait(
 	options?: {
 		systemPrompt?: string;
 		appendSkills?: boolean;
-		onStreamUpdate?: (responseText: string) => void;
 		model?: string;
 		thinking?: string;
 		isolated?: boolean;
@@ -1416,7 +1415,6 @@ async function promptAndWait(
 
 	let responseText = "";
 	let sdkMessageCount = 0;
-	let textDeltaCount = 0;
 	let resultSubtype: string | undefined;
 
 	try {
@@ -1425,31 +1423,12 @@ async function promptAndWait(
 			sdkMessageCount++;
 
 			switch (message.type) {
-				case "stream_event": {
-					const event = (message as SDKMessage & { event: any }).event;
-					// Text deltas → accumulate and stream
-					if (event?.type === "content_block_delta" && event.delta?.type === "text_delta") {
-						responseText += event.delta.text;
-						textDeltaCount++;
-						options?.onStreamUpdate?.(responseText);
-					}
-					// Tool call start → track for action summary progress
-					if (event?.type === "content_block_start" && event.content_block?.type === "tool_use") {
-						debug(`askClaude: tool_use start: ${event.content_block.name}`);
-						toolCalls.set(event.content_block.id, {
-							name: mapToolName(event.content_block.name),
-							status: "running",
-						});
-					}
-					break;
-				}
 				case "assistant": {
-					// Update tool calls with full input for action summary
+					// Track complete tool-use blocks for the action summary.
 					for (const block of (message as any).message?.content ?? []) {
 						if (block.type === "tool_use") {
 							toolCalls.set(block.id, {
 								name: mapToolName(block.name),
-								status: "complete",
 								rawInput: block.input,
 							});
 						}
@@ -1473,7 +1452,7 @@ async function promptAndWait(
 		const stopReason = wasAborted ? "cancelled" : "stop";
 		debug(`askClaude: done`,
 			`stopReason=${stopReason} resultSubtype=${resultSubtype ?? "none"}`,
-			`sdkMessages=${sdkMessageCount} textDeltas=${textDeltaCount} responseLen=${responseText.length}`,
+			`sdkMessages=${sdkMessageCount} responseLen=${responseText.length}`,
 			`toolCalls=${toolCalls.size}`);
 		return { responseText, stopReason };
 	} finally {

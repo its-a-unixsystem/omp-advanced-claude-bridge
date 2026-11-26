@@ -10,7 +10,6 @@
 
 export interface ToolCallState {
 	name: string;
-	status: string;
 	rawInput?: unknown;
 }
 

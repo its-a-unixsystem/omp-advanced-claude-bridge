@@ -17,12 +17,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   The SDK MCP server is now `advanced-claude-bridge-tools`, and the default
   delegation tool is `AskClaudeAdvanced`. See the
   [migration guide](README.md#migrating-from-the-old-names) for side-by-side use.
+- Removed the `change-case` runtime dependency; the direct Anthropic SDK
+  dependency is now used only for development types.
 
 ### Fixed
 - Each OMP provider session now keeps its own Claude Code session. In-process
   subagents and `/btw` side requests no longer overwrite the main agent's
   resume cursor, get their prior history imported, and replay deferred steers
   against their own session.
+- The provider looks for `AGENTS.md` from each request's working directory.
+- Empty session files no longer trigger a warning when zero records are
+  expected. Session-file warnings link to this fork's issue tracker.
 
 ## [0.8.1] - 2026-07-07
 

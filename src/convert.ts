@@ -3,7 +3,6 @@
 
 import type { Message as PiMessage } from "@oh-my-pi/pi-ai";
 import type { Message as SessionMessage } from "cc-session-io";
-import { pascalCase } from "change-case";
 
 export const PROVIDER_ID = "advanced-claude-bridge";
 
@@ -19,6 +18,20 @@ export function sanitizeToolId(id: string, cache: Map<string, string>): string {
 	return clean;
 }
 
+// Preserve acronym boundaries and numeric separators in imported tool names.
+function pascalCaseToolName(name: string): string {
+	const words = name
+		.replace(/([\p{Ll}\d])(\p{Lu})/gu, "$1 $2")
+		.replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1 $2")
+		.match(/[\p{L}\d]+/giu);
+	if (!words) return "";
+	return words.map((word, index) => {
+		const initial = word[0];
+		const prefix = index > 0 && initial >= "0" && initial <= "9" ? `_${initial}` : initial.toLocaleUpperCase();
+		return prefix + word.slice(1).toLocaleLowerCase();
+	}).join("");
+}
+
 export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<string, string>): string {
 	if (!name) return "";
 	const normalized = name.toLowerCase();
@@ -27,7 +40,7 @@ export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<strin
 		if (mapped) return mapped;
 	}
 	if (PI_TO_SDK_TOOL_NAME[normalized]) return PI_TO_SDK_TOOL_NAME[normalized];
-	return pascalCase(name);
+	return pascalCaseToolName(name);
 }
 
 export function messageContentToText(
