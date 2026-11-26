@@ -10,7 +10,6 @@
 
 export interface ToolCallState {
 	name: string;
-	status: string;
 	rawInput?: unknown;
 }
 
@@ -64,17 +63,17 @@ export function formatToolAction(tc: ToolCallState): string | undefined {
 		const current = todos.find((t: any) => t.status === "in_progress") ?? todos.find((t: any) => t.status === "pending");
 		const label = current ? String(current.content ?? "").slice(0, 40) : "";
 		return label || undefined;
-	} else if (verb === "askclaude") {
-		// Recursive — don't show AskClaude in its own action summary
-		return undefined;
 	}
 	return tc.name;
 }
 
-export function buildActionSummary(calls: Map<string, ToolCallState>): string {
+export function buildActionSummary(calls: Map<string, ToolCallState>, ownToolName: string): string {
+	const normalizedToolName = ownToolName.toLowerCase();
 	const parts: string[] = [];
 	let prevVerb = "";
 	for (const [, tc] of calls) {
+		// Do not show recursive calls to this delegation tool in its own summary.
+		if (tc.name.toLowerCase() === normalizedToolName) continue;
 		const action = formatToolAction(tc);
 		if (!action) continue;
 		const verb = tc.name.toLowerCase().split(/\s/)[0];

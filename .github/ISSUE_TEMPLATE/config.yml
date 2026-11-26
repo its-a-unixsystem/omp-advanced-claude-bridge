@@ -3,6 +3,9 @@ contact_links:
   - name: Oh My Pi
     url: https://omp.sh
     about: Docs and downloads for the Oh My Pi coding agent.
+  - name: Upstream omp-claude-bridge
+    url: https://github.com/DevVig/omp-claude-bridge
+    about: The Oh My Pi extension this project is forked from.
   - name: Original pi-claude-bridge
     url: https://github.com/elidickinson/pi-claude-bridge
-    about: The upstream Pi extension this project is ported from.
+    about: The original Pi extension that omp-claude-bridge was ported from.

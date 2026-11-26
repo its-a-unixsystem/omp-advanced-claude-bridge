@@ -1,5 +1,5 @@
 // User-facing extension config. Loaded once at extension registration from
-// ~/.omp/agent/claude-bridge.json and the project OMP config directory, project
+// ~/.omp/agent/advanced-claude-bridge.json and the project OMP config directory, project
 // overriding global. Missing or unparseable files are ignored (error to
 // console.error, empty object returned) so the extension always starts.
 
@@ -9,6 +9,8 @@ import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
+
+const CONFIG_FILE_NAME = "advanced-claude-bridge.json";
 
 export interface Config {
 	askClaude?: {
@@ -44,14 +46,14 @@ export function tryParseJson(path: string): Partial<Config> {
 	try {
 		return JSON.parse(readFileSync(path, "utf-8"));
 	} catch (e) {
-		console.error(`claude-bridge: failed to parse ${path}: ${e}`);
+		console.error(`${CONFIG_FILE_NAME}: failed to parse ${path}: ${e}`);
 		return {};
 	}
 }
 
 export function loadConfig(cwd: string): Config {
-	const global = tryParseJson(join(homedir(), ".omp", "agent", "claude-bridge.json"));
-	const project = tryParseJson(join(cwd, CONFIG_DIR_NAME, "claude-bridge.json"));
+	const global = tryParseJson(join(homedir(), ".omp", "agent", CONFIG_FILE_NAME));
+	const project = tryParseJson(join(cwd, CONFIG_DIR_NAME, CONFIG_FILE_NAME));
 	return {
 		askClaude: { ...global.askClaude, ...project.askClaude },
 		provider: { ...global.provider, ...project.provider },

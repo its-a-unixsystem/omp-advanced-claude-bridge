@@ -7,18 +7,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- Continued as the independent project `omp-advanced-claude-bridge`
-  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>). The
-  provider id `claude-bridge` and the config file names are unchanged.
+- Forked from [DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)
+  as the independently maintained project `omp-advanced-claude-bridge`
+  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>), with
+  updated documentation, fork attribution, and banner graphic.
 - Ported the provider and AskClaude renderer to Oh My Pi 19.2.1. The bridge
   now uses OMP's bundled catalog, native streaming and tool-schema APIs, and
   reactive text nodes for AskClaude's call and result previews.
+- Breaking: use `advanced-claude-bridge/<model>` for saved model selections
+  and `advanced-claude-bridge.json` for global and project configuration.
+  The SDK MCP server is now `advanced-claude-bridge-tools`, and the default
+  delegation tool is `AskClaudeAdvanced`. See the
+  [migration guide](README.md#migrating-from-the-old-names) for side-by-side use.
+- Removed the `change-case` runtime dependency; the direct Anthropic SDK
+  dependency is now used only for development types.
 
 ### Fixed
 - Each OMP provider session now keeps its own Claude Code session. In-process
   subagents and `/btw` side requests no longer overwrite the main agent's
   resume cursor, get their prior history imported, and replay deferred steers
   against their own session.
+- Overlapping turns no longer share a writable Claude Code transcript. An
+  edited or removed final reply triggers a rebuild, and deferred steers
+  preserve images when replayed.
+- Unsuffixed models use their only available context window when the configured
+  default is unavailable. Explicit window suffixes still require that window.
+- Claude Agent SDK failure results now surface as errors instead of empty
+  successes, including in AskClaude.
+- AskClaude rejects direct full-mode calls when `allowFullMode` is false
+  without overriding a no-tools default. Already-aborted calls do not start
+  Claude Code.
+- Diagnostic logging no longer interrupts recovery, tool schema enums no longer
+  crash provider turns, and history import preserves signed thinking from OMP's
+  native Anthropic provider.
+- The provider looks for `AGENTS.md` from each request's working directory.
+- Empty session files no longer trigger a warning when zero records are
+  expected. Session-file warnings link to this fork's issue tracker.
 
 ## [0.8.1] - 2026-07-07
 

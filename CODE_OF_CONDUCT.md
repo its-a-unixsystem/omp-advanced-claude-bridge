@@ -45,7 +45,7 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainer at `jon@learnvig.com`. All complaints will be
+reported to the maintainer at `thomas@februus.net`. All complaints will be
 reviewed and investigated promptly and fairly.
 
 ## Attribution

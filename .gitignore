@@ -22,3 +22,8 @@ claude-bridge.log
 .idea/
 .vscode/
 *.swp
+
+# Local agent tooling and task notes
+/.agents/
+/.claude/
+/documentation/

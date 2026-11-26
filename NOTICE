@@ -1,8 +1,9 @@
 omp-advanced-claude-bridge
 ==========================
 
-This project continues "omp-claude-bridge", the Oh My Pi (OMP) port of the
-original "pi-claude-bridge" extension, as an independent project.
+This project is an independently maintained fork of "omp-claude-bridge"
+(https://github.com/DevVig/omp-claude-bridge), which is itself the Oh My Pi
+(OMP) port of the original "pi-claude-bridge" extension.
 
 Original work
 -------------
@@ -11,30 +12,39 @@ Original work
   https://github.com/elidickinson/pi-claude-bridge
   Licensed under the MIT License.
 
-Derivative work
----------------
+Upstream fork (Oh My Pi port)
+-----------------------------
   omp-claude-bridge
-  Copyright (c) 2026 Jonathan Borgwing (https://github.com/DevVig)
+  Copyright (c) 2026 Jonathan Borgwing
+  https://github.com/DevVig/omp-claude-bridge
   Licensed under the MIT License.
 
   Changes from the original:
     - Ported the extension from Pi (@earendil-works/*) to Oh My Pi
       (@oh-my-pi/*), including the extension manifest, provider registration,
       message conversion, and config directory resolution.
-    - Added a `provider.contextWindow` setting ("auto" | "1m" | "200k") that
-      forces the Claude Code context window across every model, hiding models
-      that have no runtime for the selected window.
+    - Added a `provider.contextWindow` setting ("auto" | "1m" | "200k") and
+      on-demand context-window variants in the model picker.
 
-Derivative work
----------------
+This fork
+---------
   omp-advanced-claude-bridge
-  Copyright (c) 2026 Thomas Übermeier (https://github.com/its-a-unixsystem)
+  Copyright (c) 2026 Thomas Übermeier
+  https://github.com/its-a-unixsystem/omp-advanced-claude-bridge
   Licensed under the MIT License.
 
   Changes from omp-claude-bridge:
-    - Ported the provider and AskClaude to the Oh My Pi 19.2 extension API.
-    - Gave each OMP provider session its own Claude Code session, so
-      subagents and side requests no longer share the main agent's state.
+    - Ported the provider and AskClaude renderer to the Oh My Pi 19.2+
+      extension API.
+    - Rewrote the session and query core so each OMP provider session owns its
+      own Claude Code session, history sync, and deferred steer replay,
+      preventing subagents and side requests from sharing the main agent's state.
+    - Namespaced the provider (`advanced-claude-bridge`), config file
+      (`advanced-claude-bridge.json`), MCP tool server
+      (`advanced-claude-bridge-tools`), and delegation tool
+      (`AskClaudeAdvanced`) so the fork can run alongside upstream.
+    - Hardened Claude Agent SDK error handling, abort checks, and signed
+      thinking history import.
 
 The original MIT copyright notices are retained in the LICENSE file, as
 required by the MIT License.

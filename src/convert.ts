@@ -3,9 +3,14 @@
 
 import type { Message as PiMessage } from "@oh-my-pi/pi-ai";
 import type { Message as SessionMessage } from "cc-session-io";
-import { pascalCase } from "change-case";
 
-export const PROVIDER_ID = "claude-bridge";
+export const PROVIDER_ID = "advanced-claude-bridge";
+
+/** Roles Claude Code receives as a user turn. OMP sends `developer` messages
+ *  (reminders, synthetic continues) as user turns on its own Anthropic provider too. */
+export function isPromptRole(role: string): boolean {
+	return role === "user" || role === "developer";
+}
 
 export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",
@@ -19,6 +24,20 @@ export function sanitizeToolId(id: string, cache: Map<string, string>): string {
 	return clean;
 }
 
+// Preserve acronym boundaries and numeric separators in imported tool names.
+function pascalCaseToolName(name: string): string {
+	const words = name
+		.replace(/([\p{Ll}\d])(\p{Lu})/gu, "$1 $2")
+		.replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1 $2")
+		.match(/[\p{L}\d]+/giu);
+	if (!words) return "";
+	return words.map((word, index) => {
+		const initial = word[0];
+		const prefix = index > 0 && initial >= "0" && initial <= "9" ? `_${initial}` : initial.toLocaleUpperCase();
+		return prefix + word.slice(1).toLocaleLowerCase();
+	}).join("");
+}
+
 export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<string, string>): string {
 	if (!name) return "";
 	const normalized = name.toLowerCase();
@@ -27,7 +46,7 @@ export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<strin
 		if (mapped) return mapped;
 	}
 	if (PI_TO_SDK_TOOL_NAME[normalized]) return PI_TO_SDK_TOOL_NAME[normalized];
-	return pascalCase(name);
+	return pascalCaseToolName(name);
 }
 
 export function messageContentToText(
@@ -53,7 +72,14 @@ export function convertPiMessages(
 	const sanitizedIds = new Map();
 
 	for (const msg of messages) {
-		if (msg.role === "user") {
+		if (isPromptRole(msg.role)) {
+			// Skip empty developer messages — they carry nothing Claude Code can replay.
+			if (msg.role !== "user") {
+				const text = typeof msg.content === "string"
+					? msg.content
+					: messageContentToText(msg.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
+				if (!text.trim()) continue;
+			}
 			if (typeof msg.content === "string") {
 				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
 			} else if (Array.isArray(msg.content)) {
@@ -76,7 +102,8 @@ export function convertPiMessages(
 					blocks.push({ type: "text", text: block.text });
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
-					const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic";
+					// The old provider ID can still occur in saved transcripts.
+					const isAnthropicProvider = msg.api === "anthropic-messages" || msg.provider === PROVIDER_ID || msg.provider === "claude-bridge";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}
