@@ -3,8 +3,10 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import { z } from "zod";
 import { loadConfig } from "../src/config.ts";
-import { askClaudeTool, assistant, claude, createdSince, cwd, extensionContext, historyOf, resetHarness, transcriptOf, user } from "./harness/bridge.ts";
+import { activateBridge, askClaudeTool, assistant, claude, createdSince, cwd, extensionContext, historyOf, resetHarness, transcriptOf, user } from "./harness/bridge.ts";
 
 afterEach(resetHarness);
 
@@ -28,8 +30,8 @@ function toolContext(sessionId: string, messages: any[], model: unknown = otherM
 	});
 }
 
-function ask(params: Record<string, unknown>, ctx: unknown) {
-	return askClaudeTool().execute("call-1", params, undefined, undefined, ctx);
+function ask(params: Record<string, unknown>, ctx: unknown, signal?: AbortSignal) {
+	return askClaudeTool().execute("call-1", params, signal, undefined, ctx);
 }
 
 test("the fork reads only its own project configuration", () => {
@@ -87,5 +89,56 @@ test("AskClaudeAdvanced refuses to run while its own provider is active", async 
 	const result = await ask({ prompt: "loop?" }, ctx);
 	expect(result.details.error).toBe(true);
 	expect(result.content[0].text).toContain("AskClaudeAdvanced cannot be used when the active provider is advanced-claude-bridge");
+	expect(claude.queries).toHaveLength(0);
+});
+
+test("allowFullMode false overrides a full default and rejects direct full-mode calls", async () => {
+	const project = mkdtempSync(join(cwd, "config-"));
+	let tool: ReturnType<typeof askClaudeTool>;
+	try {
+		const configDir = join(project, ".omp");
+		mkdirSync(configDir);
+		writeFileSync(join(configDir, "advanced-claude-bridge.json"), '{"askClaude":{"allowFullMode":false,"defaultMode":"full"}}');
+		process.chdir(project);
+		const registration: Pick<ExtensionAPI, "zod" | "on" | "registerProvider" | "registerTool"> = {
+			zod: z,
+			on() {},
+			registerProvider() {},
+			registerTool(registered) { tool = registered; },
+		};
+		activateBridge(registration as ExtensionAPI);
+	} finally {
+		process.chdir(askCwd);
+		rmSync(project, { recursive: true, force: true });
+	}
+
+	const ctx = toolContext("ask-no-full", []);
+	const denied = await tool.execute("call-full", { prompt: "test", mode: "full" }, undefined, undefined, ctx);
+	expect(denied.details.error).toBe(true);
+	expect(denied.content[0].text).toContain("full mode is disabled");
+	expect(claude.queries).toHaveLength(0);
+
+	claude.next(async function* (cc) { yield* cc.reply("Read-only answer."); });
+	const result = await tool.execute("call-default", { prompt: "test", isolated: true }, undefined, undefined, ctx);
+	expect(result.content[0].text).toBe("Read-only answer.");
+	expect(claude.queries[0].options.disallowedTools).toContain("Write");
+});
+
+test("AskClaude surfaces an SDK failure even after partial output", async () => {
+	claude.next(async function* (cc) {
+		yield* cc.reply("Partial answer.");
+		yield { type: "result", subtype: "success", is_error: true, result: "Not authenticated" };
+	});
+	const result = await ask({ prompt: "test", isolated: true }, toolContext("ask-sdk-error", []));
+	expect(result.details.error).toBe(true);
+	expect(result.content[0].text).toBe("Error: Not authenticated");
+	expect(claude.queries[0].isClosed).toBe(true);
+});
+
+test("a pre-aborted AskClaude call neither imports history nor starts a query", async () => {
+	const result = await ask({ prompt: "test" }, toolContext("ask-pre-aborted", [user("earlier")]), AbortSignal.abort());
+	expect(result.details.error).toBe(true);
+	expect(result.content[0].text).toBe("Error: Aborted");
+	expect(createdSince(0)).toEqual([]);
 	expect(claude.queries).toHaveLength(0);
 });

@@ -90,7 +90,7 @@ export function convertPiMessages(
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
 					// The old provider ID can still occur in saved transcripts.
-					const isAnthropicProvider = msg.api === "anthropic" || msg.provider === PROVIDER_ID || msg.provider === "claude-bridge";
+					const isAnthropicProvider = msg.api === "anthropic-messages" || msg.provider === PROVIDER_ID || msg.provider === "claude-bridge";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}

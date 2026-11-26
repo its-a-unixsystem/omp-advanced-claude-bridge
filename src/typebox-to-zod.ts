@@ -6,8 +6,18 @@ import { z } from "zod";
 
 export function jsonSchemaPropertyToZod(prop: Record<string, unknown>): z.ZodTypeAny {
 	let base: z.ZodTypeAny;
-	if (Array.isArray(prop.enum)) base = z.enum(prop.enum as [string, ...string[]]);
-	else switch (prop.type) {
+	if (Array.isArray(prop.enum)) {
+		const values: unknown[] = prop.enum;
+		if (values.length > 0 && values.every((value) => typeof value === "string")) {
+			base = z.enum(values);
+		} else if (values.length > 0 && values.every((value): value is string | number | boolean | null =>
+			value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+		)) {
+			base = z.literal(values);
+		} else {
+			base = z.unknown();
+		}
+	} else switch (prop.type) {
 		case "string": base = z.string(); break;
 		case "number": case "integer": base = z.number(); break;
 		case "boolean": base = z.boolean(); break;

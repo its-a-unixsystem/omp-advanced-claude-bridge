@@ -33,8 +33,8 @@ export function buildModels(piAiModels: readonly CatalogModel[]) {
 
 // User-selectable context-window policy (see provider.contextWindow in config).
 //   "auto"  - per-model default policy (measured SDK behavior).
-//   "1m"    - force 1M: only register 1M-capable models, request [1m] where needed.
-//   "200k"  - force 200K: only register 200K-capable models, request bare model ids.
+//   "1m"    - prefer 1M, requesting [1m] where needed.
+//   "200k"  - prefer 200K, requesting bare model ids.
 export type ContextWindowMode = "auto" | "1m" | "200k";
 
 export type LongContextSettings = {
@@ -55,7 +55,7 @@ const ONE_M_CONTEXT = 1_000_000;
 // pi-ai's advertised contextWindow: bare Opus 4.7 serves 1M, bare Opus 4.8 does
 // not, bare Fable 5 serves 200K while claude-fable-5[1m] serves 1M, and [1m]
 // entitlement differs by model. Returns null when a model has no runtime for the
-// requested forced window (that model is hidden from the picker in that mode).
+// requested window, before applying the unsuffixed model fallback.
 export function resolveClaudeCodeRuntimeModel(modelId: string, settings: LongContextSettings): ClaudeCodeRuntimeModel | null {
 	switch (settings.contextWindow) {
 		case "1m":
@@ -151,13 +151,19 @@ export function parseVariantId(id: string): { baseId: string; forced?: "1m" | "2
 	return { baseId: id };
 }
 
+function resolveDefaultRuntimeModel(modelId: string, settings: LongContextSettings): ClaudeCodeRuntimeModel | null {
+	const preferred = resolveClaudeCodeRuntimeModel(modelId, settings);
+	// Known models excluded by the preference have exactly one available window.
+	return preferred ?? (MODEL_IDS_IN_ORDER.includes(modelId) ? resolveAutoRuntimeModel(modelId, settings) : null);
+}
+
 export function claudeCodeModelId(model: { id: string }, settings: LongContextSettings): string {
 	const { baseId, forced } = parseVariantId(model.id);
 	const runtimeModel = forced === "1m"
 		? resolveForcedOneMRuntimeModel(baseId)
 		: forced === "200k"
 			? resolveForcedTwoHundredKRuntimeModel(baseId)
-			: resolveClaudeCodeRuntimeModel(baseId, settings);
+			: resolveDefaultRuntimeModel(baseId, settings);
 	if (runtimeModel == null) {
 		const requested = forced ?? settings.contextWindow;
 		throw new Error(`claude-bridge: model ${model.id} has no Claude Code runtime (contextWindow=${requested})`);
@@ -190,12 +196,13 @@ export function buildVariantModels<T extends { id: string; name: string; context
 ): T[] {
 	const result: T[] = [];
 	for (const m of models) {
+		const defaultRuntime = resolveDefaultRuntimeModel(m.id, settings);
+		if (defaultRuntime == null) continue;
 		// Unknown model (not in the model tables): keep one default-path entry.
 		// Done before the forced-resolver probes below, which log "hiding it" on
 		// unknown ids — misleading noise for a model we actually keep.
 		if (!MODEL_IDS_IN_ORDER.includes(m.id)) {
-			const runtimeModel = resolveClaudeCodeRuntimeModel(m.id, settings);
-			if (runtimeModel != null) result.push({ ...m, contextWindow: runtimeModel.contextWindow, name: variantName(m.name, runtimeModel.contextWindow) });
+			result.push({ ...m, contextWindow: defaultRuntime.contextWindow, name: variantName(m.name, defaultRuntime.contextWindow) });
 			continue;
 		}
 
@@ -204,16 +211,7 @@ export function buildVariantModels<T extends { id: string; name: string; context
 		if (resolveForcedOneMRuntimeModel(m.id) != null) available.push({ kind: "1m", contextWindow: ONE_M_CONTEXT });
 		if (resolveForcedTwoHundredKRuntimeModel(m.id) != null) available.push({ kind: "200k", contextWindow: TWO_HUNDRED_K_CONTEXT });
 
-		// The config default decides which window is unsuffixed; fall back to the sole
-		// available window when the preferred one has no runtime (e.g. Haiku under
-		// "1m", Opus 4.7 under "200k").
-		const defaultRuntime = resolveClaudeCodeRuntimeModel(m.id, settings);
-		const preferredKind: "1m" | "200k" | undefined = defaultRuntime == null
-			? undefined
-			: defaultRuntime.contextWindow === ONE_M_CONTEXT ? "1m" : "200k";
-		const defaultKind = preferredKind != null && available.some((a) => a.kind === preferredKind)
-			? preferredKind
-			: available[0].kind;
+		const defaultKind = defaultRuntime.contextWindow === ONE_M_CONTEXT ? "1m" : "200k";
 
 		const ordered = [
 			...available.filter((a) => a.kind === defaultKind),

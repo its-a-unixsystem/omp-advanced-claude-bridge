@@ -2,7 +2,7 @@ import { createAssistantMessageEventStream, toolWireSchema, type AssistantMessag
 import { getBundledModelSlice } from "@oh-my-pi/pi-catalog/models";
 import { buildSessionContext, formatKeyHint, getKeybindings, type CompactionEntry, type ExtensionAPI, type ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
 import { compact } from "@oh-my-pi/pi-agent-core/compaction";
-import { createSdkMcpServer, query, type EffortLevel, type Options, type Query, type SDKMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, type EffortLevel, type Options, type Query, type SDKMessage, type SDKResultMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { jsx } from "@oh-my-pi/pi-tui";
 import { createSession, deleteSession, repairToolPairing } from "cc-session-io";
@@ -43,7 +43,6 @@ const DIAG_LOG_PATH = join(homedir(), ".omp", "agent", "claude-bridge-diag.log")
 if (DEBUG) {
 	try {
 		mkdirSync(dirname(DEBUG_LOG_PATH), { recursive: true });
-		mkdirSync(dirname(DIAG_LOG_PATH), { recursive: true });
 	} catch {
 		// If directory creation fails, debug functions will throw on first use
 	}
@@ -92,10 +91,14 @@ function makeCliDebugOptions(tag: string): { debug?: boolean; debugFile?: string
 
 /** Unconditional diagnostic dump — for "should never happen" paths */
 function diagDump(label: string, data: Record<string, unknown>) {
-	const ts = new Date().toISOString();
-	const entry = { ts, moduleInstanceId, label, ...data };
-	appendFileSync(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
-	debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+	try {
+		mkdirSync(dirname(DIAG_LOG_PATH), { recursive: true });
+		const entry = { ts: new Date().toISOString(), moduleInstanceId, label, ...data };
+		appendFileSync(DIAG_LOG_PATH, JSON.stringify(entry) + "\n");
+		debug(`DIAG: ${label} (see ${DIAG_LOG_PATH})`);
+	} catch {
+		// Diagnostic logging must not interrupt recovery.
+	}
 }
 
 // --- Constants ---
@@ -277,11 +280,11 @@ function extractIsolatedSummaryPrompt(messages: Context["messages"]): string {
 	return promptText;
 }
 
-function resultErrorText(message: SDKMessage): string {
-	const result = message as SDKMessage & { subtype?: string; errors?: unknown; error?: unknown };
-	if (Array.isArray(result.errors)) return result.errors.map(String).join("\n");
-	if (typeof result.error === "string") return result.error;
-	return `Claude Code summary failed: ${result.subtype ?? "unknown result"}`;
+function resultErrorText(message: SDKResultMessage): string {
+	const text = message.subtype === "success" ? message.result : message.errors?.join("\n");
+	if (text) return text;
+	if ("error" in message && typeof message.error === "string" && message.error) return message.error;
+	return `Claude Code failed: ${message.subtype === "success" ? "SDK reported an error" : message.subtype}`;
 }
 
 function isolatedStreamFn(model: Model<any>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream {
@@ -359,7 +362,7 @@ async function runIsolatedSummary(
 				}
 			} else if (message.type === "result") {
 				logServedContextWindow("compact summary", message, model);
-				if (message.subtype === "success") {
+				if (message.subtype === "success" && !message.is_error) {
 					finalText = message.result || assistantText;
 				} else {
 					errorText = resultErrorText(message);
@@ -947,6 +950,9 @@ async function consumeQuery(
 ): Promise<void> {
 	for await (const message of sdkQuery) {
 		if (queryCtx.aborted) break;
+		if (message.type === "result" && (message.subtype !== "success" || message.is_error)) {
+			throw new Error(resultErrorText(message));
+		}
 		if (!queryCtx.currentPiStream || !queryCtx.turnOutput) continue;
 
 		switch (message.type) {
@@ -1338,6 +1344,8 @@ async function promptAndWait(
 		sessionId?: string;
 	},
 ): Promise<{ responseText: string; stopReason: string }> {
+	if (signal?.aborted) throw new Error("Aborted");
+
 	const cwd = process.cwd();
 	const requestedModel = options?.model ?? "opus";
 	const model = resolveModel(requestedModel);
@@ -1410,14 +1418,17 @@ async function promptAndWait(
 		wasAborted = true;
 		sdkQuery.interrupt().catch(() => { try { sdkQuery.close(); } catch {} });
 	};
-	if (signal?.aborted) { onAbort(); throw new Error("Aborted"); }
-	signal?.addEventListener("abort", onAbort, { once: true });
 
 	let responseText = "";
 	let sdkMessageCount = 0;
 	let resultSubtype: string | undefined;
 
 	try {
+		if (signal?.aborted) {
+			onAbort();
+			throw new Error("Aborted");
+		}
+		signal?.addEventListener("abort", onAbort, { once: true });
 		for await (const message of sdkQuery) {
 			if (wasAborted) break;
 			sdkMessageCount++;
@@ -1437,11 +1448,12 @@ async function promptAndWait(
 				}
 				case "result": {
 					resultSubtype = message.subtype;
+					if (message.subtype !== "success" || message.is_error) throw new Error(resultErrorText(message));
 					const r = message as any;
 					if (r.usage) {
 						debug(`askClaude: result usage: in=${r.usage.input_tokens} out=${r.usage.output_tokens} cacheRead=${r.usage.cache_read_input_tokens ?? 0} cacheWrite=${r.usage.cache_creation_input_tokens ?? 0} turns=${r.num_turns ?? "?"}`);
 					}
-					if (!responseText && message.subtype === "success" && message.result) {
+					if (!responseText && message.result) {
 						responseText = message.result;
 					}
 					break;
@@ -1557,7 +1569,7 @@ export default function (pi: ExtensionAPI) {
 	// --- AskClaude tool ---
 
 	const allowFull = askConf?.allowFullMode !== false;
-	const defaultMode = askConf?.defaultMode ?? "read";
+	const defaultMode = allowFull ? askConf?.defaultMode ?? "read" : "read";
 	const defaultIsolated = askConf?.defaultIsolated ?? false;
 
 	const modeValues = allowFull ? ["read", "full", "none"] as const : ["read", "none"] as const;
@@ -1664,6 +1676,12 @@ export default function (pi: ExtensionAPI) {
 
 				const askParams = readAskClaudeParams(params, true);
 				const mode = askParams.mode ?? defaultMode;
+				if (!allowFull && mode === "full") {
+					return {
+						content: [{ type: "text" as const, text: `Error: ${askClaudeToolName} full mode is disabled.` }],
+						details: { error: true },
+					};
+				}
 				const isolated = askParams.isolated ?? defaultIsolated;
 				const toolCalls = new Map<string, ToolCallState>();
 				const start = Date.now();

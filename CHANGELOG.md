@@ -25,6 +25,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subagents and `/btw` side requests no longer overwrite the main agent's
   resume cursor, get their prior history imported, and replay deferred steers
   against their own session.
+- Unsuffixed models use their only available context window when the configured
+  default is unavailable. Explicit window suffixes still require that window.
+- Claude Agent SDK failure results now surface as errors instead of empty
+  successes, including in AskClaude.
+- AskClaude enforces `allowFullMode: false` even for direct calls. Calls that
+  are already aborted do not start Claude Code.
+- Diagnostic logging no longer interrupts recovery, tool schema enums no longer
+  crash provider turns, and history import preserves signed thinking from OMP's
+  native Anthropic provider.
 - The provider looks for `AGENTS.md` from each request's working directory.
 - Empty session files no longer trigger a warning when zero records are
   expected. Session-file warnings link to this fork's issue tracker.

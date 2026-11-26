@@ -6,6 +6,9 @@
 // should turn each one into a plain `test`.
 
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
 	agent, assistant, claude, createdSince, emit, historyOf, resetHarness, run, sessionCalls, sessionState, settle, stream, text,
 	toolResult, transcriptOf, user, type Agent,
@@ -34,6 +37,29 @@ async function startTaskTurn(who: Agent, history: any[], toolUseId: string) {
 }
 
 describe("main agent", () => {
+	test.each([
+		[{ subtype: "error_during_execution", is_error: true, errors: ["CLI failed", "Retry later"] }, "CLI failed\nRetry later"],
+		[{ subtype: "success", is_error: true, result: "Invalid API key" }, "Invalid API key"],
+	] as const)("an SDK error result fails the turn and invalidates the session (%j)", async (sdkResult, expectedError) => {
+		const main = agent("sdk-result-error");
+		const history = await turn(main, [], "hi", "hello");
+		claude.next(async function* () { yield { type: "result", ...sdkResult }; });
+		const reply = await run(main, [...history, user("continue")]);
+		expect(reply.stopReason).toBe("error");
+		expect(reply.errorMessage).toBe(expectedError);
+		expect(sessionState(main)).toBeNull();
+		expect(claude.queries[1].isClosed).toBe(true);
+	});
+
+	test("an empty prompt recovers and writes a diagnostic", async () => {
+		claude.next(async function* (cc) { yield* cc.reply("Continued."); });
+		const reply = await run(agent("empty-prompt"), [user("")]);
+		expect(claude.queries[0].prompt).toBe("[continue]");
+		expect(text(reply)).toBe("Continued.");
+		const log = readFileSync(join(homedir(), ".omp", "agent", "claude-bridge-diag.log"), "utf8");
+		expect(log).toContain('"label":"empty_prompt"');
+	});
+
 	test("the first turn starts a Claude Code session and the next turn resumes it", async () => {
 		const main = agent("turns-main");
 		const first = await turn(main, [], "hi", "hello");

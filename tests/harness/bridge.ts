@@ -29,6 +29,7 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({ query: claude.query, crea
 mock.module("cc-session-io", () => recordingSessionIo());
 
 const { default: activate } = await import("../../src/index.ts");
+export { activate as activateBridge };
 
 type Handler = (event: any, ctx: any) => unknown;
 const handlers = new Map<string, Handler[]>();

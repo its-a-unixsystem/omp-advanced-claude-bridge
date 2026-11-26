@@ -125,9 +125,12 @@ test("claudeCodeModelId: a suffixed id forces its window regardless of config", 
 	assert.equal(claudeCodeModelId({ id: "claude-opus-4-6-1m" }, settings("auto")), "claude-opus-4-6[1m]");
 });
 
-test("claudeCodeModelId throws when a model has no runtime for the requested window", () => {
+test("claudeCodeModelId uses the only window for an unsuffixed model when the preferred window is unavailable", () => {
+	assert.equal(claudeCodeModelId({ id: "claude-haiku-4-5" }, settings("1m")), "claude-haiku-4-5");
+	assert.equal(claudeCodeModelId({ id: "claude-opus-4-7" }, settings("200k")), "claude-opus-4-7");
+});
+
+test("claudeCodeModelId rejects an explicitly requested window that the model does not support", () => {
 	assert.throws(() => claudeCodeModelId({ id: "claude-haiku-4-5-1m" }, settings("auto")));
 	assert.throws(() => claudeCodeModelId({ id: "claude-opus-4-7-200k" }, settings("auto")));
-	assert.throws(() => claudeCodeModelId({ id: "claude-haiku-4-5" }, settings("1m")));
-	assert.throws(() => claudeCodeModelId({ id: "claude-opus-4-7" }, settings("200k")));
 });
