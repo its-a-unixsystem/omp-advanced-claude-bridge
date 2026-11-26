@@ -23,7 +23,7 @@ export type RequestKind<Q> =
 	// A request that owns no session: an OMP helper reusing the agent's
 	// sessionId without its providerSessionState.
 	| { kind: "helper" }
-	// The agent's next turn. Whether it resumes the session is syncSession's call.
+	// The agent's next turn; history sync decides whether it can resume.
 	| { kind: "turn" };
 
 export function classifyRequest<Q extends ToolCallOwner>(

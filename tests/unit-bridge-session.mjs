@@ -1,8 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { bridgeSession, bridgeSessions, sharedSession } from "../src/bridge-session.ts";
+import { bridgeSession } from "../src/bridge-session.ts";
 import { QueryContext } from "../src/query-state.ts";
+import { SessionStore } from "../src/session-store.ts";
 
 test("each provider sessionId owns its Claude Code session", () => {
 	const mainStates = new Map();
@@ -17,13 +22,13 @@ test("each provider sessionId owns its Claude Code session", () => {
 	assert.deepEqual([...mainStates.keys()], ["advanced-claude-bridge:main", "advanced-claude-bridge:main:side:1"]);
 	assert.deepEqual([...childStates.keys()], ["advanced-claude-bridge:child"]);
 
-	main.state = { sessionId: "cc-main", cwd: "/repo", cursor: 6, prefix: "a" };
-	child.state = { sessionId: "cc-child", cwd: "/repo", cursor: 2, prefix: "b" };
+	main.state = { ...synced, sessionId: "cc-main" };
+	child.state = { ...synced, sessionId: "cc-child" };
 	assert.equal(side.state, null);
-	assert.equal(bridgeSession("main", mainStates).state.cursor, 6);
+	assert.equal(bridgeSession("main", mainStates).state.sessionId, "cc-main");
 
 	for (const session of [main, side, child]) session.close();
-	assert.equal(bridgeSessions.size, 0);
+	assert.equal(mainStates.size + childStates.size, 0);
 });
 
 test("a request without the agent's providerSessionState owns no session", () => {
@@ -35,29 +40,23 @@ test("a request without the agent's providerSessionState owns no session", () =>
 	main.close();
 });
 
-test("AskClaude finds the provider's session by sessionId", () => {
-	const states = new Map();
-	const provider = bridgeSession("main", states);
-	assert.equal(sharedSession("main"), provider);
-	provider.close();
+test("independent owner maps cannot share a native transcript by ID", () => {
+	const main = bridgeSession("main", new Map());
+	const second = bridgeSession("main", new Map());
+	main.state = synced;
+	assert.equal(second.beginTranscript().state, null);
 });
 
 test("closing a session forgets its state", () => {
 	const states = new Map();
 	const session = bridgeSession("closed", states);
-	session.state = { sessionId: "cc", cwd: "/repo", cursor: 0, prefix: "" };
+	session.state = synced;
 	session.close();
 	assert.equal(session.state, null);
 	assert.notEqual(bridgeSession("closed", states), session);
-	sharedSession("closed").close();
 });
 
-test("AskClaude without a sessionId shares nothing", () => {
-	assert.notEqual(sharedSession(undefined), sharedSession(undefined));
-	assert.equal(bridgeSessions.size, 0);
-});
-
-const synced = { sessionId: "cc", cwd: "/repo", cursor: 2, prefix: "p" };
+const synced = { sessionId: "cc", cwd: "/repo", claudeDir: "/claude", promptDigest: "digest", digests: [], uuids: [], cuttable: [], cutDigests: [], stamp: null, tailUuid: null, dirty: false };
 
 test("only the latest writer can publish a transcript", () => {
 	const session = bridgeSession("overlap", new Map());
@@ -71,6 +70,33 @@ test("only the latest writer can publish a transcript", () => {
 	first.finish(null);
 	assert.equal(session.beginTranscript().state, newer);
 	session.close();
+});
+
+test("closing during overlapping turns retains the retired transcript as dirty", t => {
+	const directory = mkdtempSync(join(tmpdir(), "claude-bridge-lease-"));
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const store = new SessionStore(directory);
+	const id = randomUUID();
+	const digest = "a".repeat(64);
+	const uuid = randomUUID();
+	const original = {
+		...synced, sessionId: randomUUID(), promptDigest: digest, tailUuid: uuid,
+		digests: [digest], uuids: [uuid], cuttable: [true], cutDigests: [digest],
+		stamp: { size: 10, mtimeMs: 1, ctimeMs: 1, digest },
+	};
+	store.save(id, original);
+	const owner = bridgeSession(id, new Map());
+	const first = owner.beginTranscript({ store });
+	assert.deepEqual(first.state, original);
+	const latest = owner.beginTranscript({ store });
+	assert.equal(latest.state, null);
+	owner.close();
+	first.finish(original);
+	latest.finish({ ...original, sessionId: randomUUID() });
+
+	const reopened = bridgeSession(id, new Map());
+	assert.deepEqual(reopened.beginTranscript({ store }).state, { ...original, dirty: true });
+	reopened.close();
 });
 
 test("closing a session aborts its queries, and a query that ends later writes nothing", () => {

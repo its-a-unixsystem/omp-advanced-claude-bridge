@@ -5,7 +5,7 @@
 
 import type { SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { ContextWindowMode } from "./models.js";
-import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils";
+import { CONFIG_DIR_NAME } from "@oh-my-pi/pi-utils/dirs";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
@@ -25,7 +25,10 @@ export interface Config {
 	};
 	/** Low-level Claude Agent SDK plumbing. Most users won't need these. */
 	provider?: {
+		/** @deprecated Use systemPromptPreset to choose how OMP's prompt is forwarded. */
 		appendSystemPrompt?: boolean;
+		systemPromptPreset?: "claude_code" | false | null;
+		autoMemoryEnabled?: boolean;
 		settingSources?: SettingSource[];
 		strictMcpConfig?: boolean;
 		pathToClaudeCodeExecutable?: string;
@@ -44,7 +47,18 @@ export interface Config {
 export function tryParseJson(path: string): Partial<Config> {
 	if (!existsSync(path)) return {};
 	try {
-		return JSON.parse(readFileSync(path, "utf-8"));
+		const config: Partial<Config> = JSON.parse(readFileSync(path, "utf-8"));
+		const provider = config?.provider;
+		if (provider) {
+			const preset = provider.systemPromptPreset;
+			if (preset !== undefined && preset !== "claude_code" && preset !== false && preset !== null) {
+				console.error(
+					`${CONFIG_FILE_NAME}: ignoring invalid provider.systemPromptPreset in ${path}; expected "claude_code", false, or null`,
+				);
+				delete provider.systemPromptPreset;
+			}
+		}
+		return config;
 	} catch (e) {
 		console.error(`${CONFIG_FILE_NAME}: failed to parse ${path}: ${e}`);
 		return {};

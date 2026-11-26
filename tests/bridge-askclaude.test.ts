@@ -52,21 +52,20 @@ test("the fork reads only its own project configuration", () => {
 test("shared mode imports the conversation and resumes it", async () => {
 	const history = [user("what does this repo do?"), assistant("It bridges Claude Code into OMP.")];
 	claude.next(async function* (cc) {
+		expect(transcriptOf(cc.query.sessionId, askCwd)).toEqual(historyOf(history));
 		yield cc.query.assistant("msg_ask_shared", [{ type: "text", text: "It is an OMP extension." }], "end_turn");
 	});
-	const result = await ask({ prompt: "second opinion?" }, toolContext("ask-shared", history));
+	const ctx = toolContext("ask-shared", history);
+	const result = await ask({ prompt: "second opinion?" }, ctx);
 
 	expect(result.details.error).toBeUndefined();
 	expect(result.content[0].text).toBe("It is an OMP extension.");
-	const created = createdSince(0);
-	expect(created).toHaveLength(1);
 	const query = claude.queries[0];
 	expect(query.prompt).toBe("second opinion?");
-	expect(query.options.resume).toBe(created[0].sessionId);
-	expect(query.options.disallowedTools).toContain("Write");
-	expect(transcriptOf(created[0].sessionId, askCwd)).toEqual(
-		historyOf([...history, user("second opinion?"), assistant("It is an OMP extension.")]),
-	);
+	expect(query.options.resume).toBe(query.sessionId);
+	expect(query.options.persistSession).toBe(false);
+	expect(transcriptOf(query.sessionId, askCwd)).toBeNull();
+	expect(query.options.settings).toEqual({ autoMemoryEnabled: false, outputStyle: "default" });
 });
 
 test("isolated mode works from the upstream provider and persists nothing", async () => {

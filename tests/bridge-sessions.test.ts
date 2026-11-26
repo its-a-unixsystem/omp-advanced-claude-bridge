@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-	agent, assistant, claude, createdSince, emit, historyOf, resetHarness, run, sessionCalls, sessionState, settle, stream, text,
+	agent, assistant, claude, createdSince, emit, historyOf, model, resetHarness, run, sessionCalls, sessionState, settle, stream, text,
 	toolResult, transcriptOf, user, type Agent,
 } from "./harness/bridge.ts";
 
@@ -40,14 +40,18 @@ describe("main agent", () => {
 	test.each([
 		[{ subtype: "error_during_execution", is_error: true, errors: ["CLI failed", "Retry later"] }, "CLI failed\nRetry later"],
 		[{ subtype: "success", is_error: true, result: "Invalid API key" }, "Invalid API key"],
-	] as const)("an SDK error result fails the turn and invalidates the session (%j)", async (sdkResult, expectedError) => {
+	] as const)("an SDK error fails the turn and leaves only the verified prefix reusable (%j)", async (sdkResult, expectedError) => {
 		const main = agent("sdk-result-error");
 		const history = await turn(main, [], "hi", "hello");
 		claude.next(async function* () { yield { type: "result", ...sdkResult }; });
 		const reply = await run(main, [...history, user("continue")]);
 		expect(reply.stopReason).toBe("error");
 		expect(reply.errorMessage).toBe(expectedError);
-		expect(sessionState(main)).toBeNull();
+		const failedSession = claude.queries[1].sessionId;
+		const retried = await turn(main, history, "retry", "success");
+		const fork = claude.queries[2].options.resume;
+		expect(fork).not.toBe(failedSession);
+		expect(transcriptOf(fork)).toEqual(historyOf(retried));
 		expect(claude.queries[1].isClosed).toBe(true);
 	});
 
@@ -65,7 +69,7 @@ describe("main agent", () => {
 		const first = await turn(main, [], "hi", "hello");
 		expect(claude.queries[0].options.resume).toBeUndefined();
 		const ccSession = claude.queries[0].sessionId;
-		expect(sessionState(main)).toMatchObject({ sessionId: ccSession, cursor: 1 });
+		expect(transcriptOf(ccSession)).toEqual(historyOf(first));
 
 		const mark = sessionCalls.length;
 		const second = await turn(main, first, "more", "sure");
@@ -95,9 +99,63 @@ describe("main agent", () => {
 		const reply = await run(main, history);
 		expect(text(reply)).toBe("task said: found it");
 		history.push(reply);
-		expect(sessionState(main).cursor).toBe(3);
 		expect(transcriptOf(claude.queries[0].sessionId)).toEqual(historyOf(history));
 		expect(claude.queries[0].isClosed).toBe(true);
+	});
+
+	test("late rate limits reach only the tool continuation that owns the query", async () => {
+		const main = agent("rate-main");
+		const late = Promise.withResolvers<void>();
+		const rate = (utilization: number) => ({
+			type: "rate_limit_event", rate_limit_info: {
+				status: "allowed_warning", utilization, rateLimitType: "five_hour", resetsAt: 1783432800,
+			},
+		});
+		claude.next(async function* (cc) {
+			yield rate(0.25);
+			for await (const event of cc.useTool("toolu_rate", "task", { prompt: "look around" })) {
+				yield event;
+				if (event.type === "assistant") {
+					yield rate(0.82);
+					yield rate(0.91);
+					late.resolve();
+				}
+			}
+			yield rate(0.76);
+			yield* cc.reply("done");
+		});
+
+		const first: unknown[][] = [];
+		const next: unknown[][] = [];
+		const sideEvents: unknown[][] = [];
+		const overlappingEvents: unknown[][] = [];
+		const signal = new AbortController().signal;
+		const nextSignal = new AbortController().signal;
+		const prompt = user("use the tool");
+		const call = await run(main, [prompt], { signal, onResponse: (...args: unknown[]) => first.push(args) });
+		expect(call.stopReason).toBe("toolUse");
+		await late.promise;
+		claude.next(async function* (cc) { yield* cc.reply("side"); });
+		await run(agent("rate-main:side:1", main.states), [user("btw")], {
+			parentSessionId: main.sessionId, onResponse: (...args: unknown[]) => sideEvents.push(args),
+		});
+		claude.next(async function* (cc) { yield* cc.reply("independent turn"); });
+		await run(main, [user("another request")], {
+			onResponse: (...args: unknown[]) => overlappingEvents.push(args),
+		});
+		const reply = await run(main, [prompt, call, toolResult("toolu_rate", "found", "task")], {
+			signal: nextSignal, onResponse: (...args: unknown[]) => next.push(args),
+		});
+		const response = (value: string) => expect.objectContaining({ status: 200, headers: expect.objectContaining({
+			"anthropic-ratelimit-unified-5h-utilization": value,
+			"anthropic-ratelimit-unified-5h-reset": "1783432800",
+		}) });
+		expect(first).toEqual([[response("0.25"), model, signal]]);
+		expect(sideEvents).toEqual([]);
+		expect(overlappingEvents).toEqual([]);
+		expect(next).toEqual([[response("0.91"), model, nextSignal], [response("0.76"), model, nextSignal]]);
+		expect(text(reply)).toBe("done");
+		expect(claude.queries).toHaveLength(3);
 	});
 
 	test.each(["matching", "diverged"])("an overlapping turn with %s history uses a separate transcript", async (kind) => {
@@ -124,7 +182,7 @@ describe("main agent", () => {
 });
 
 describe("subagents", () => {
-	test("a subagent imports its own history and keeps its own cursor", async () => {
+	test("a subagent imports its own history without overwriting its parent", async () => {
 		const main = agent("child-main");
 		const child = agent("child-sub");
 		let mainHistory = await turn(main, [], "hi", "hello");
@@ -139,8 +197,7 @@ describe("subagents", () => {
 		expect(created[0].records).toBe(2);
 		const childQuery = claude.queries.at(-1)!;
 		expect(childQuery.options.resume).toBe(created[0].sessionId);
-		expect(sessionState(child)).toMatchObject({ sessionId: created[0].sessionId, cursor: 3 });
-		expect(transcriptOf(created[0].sessionId)).toEqual(historyOf(childHistory));
+		expect(transcriptOf(childQuery.sessionId)).toEqual(historyOf(childHistory));
 		expect(transcriptOf(mainSession)).toEqual(mainWhileWaiting);
 		expect([...child.states.keys()]).toEqual(["advanced-claude-bridge:child-sub"]);
 		expect([...main.states.keys()]).toEqual(["advanced-claude-bridge:child-main"]);
@@ -149,7 +206,6 @@ describe("subagents", () => {
 		const reply = await run(main, mainHistory);
 		expect(text(reply)).toBe("task said: found it");
 		mainHistory.push(reply);
-		expect(sessionState(main)).toMatchObject({ sessionId: mainSession, cursor: 5 });
 		expect(transcriptOf(mainSession)).toEqual(historyOf(mainHistory));
 	});
 });
@@ -190,7 +246,6 @@ describe("side requests", () => {
 		const reply = await run(main, mainHistory);
 		expect(text(reply)).toBe("task said: done");
 		mainHistory.push(reply);
-		expect(sessionState(main)).toMatchObject({ sessionId: mainSession, cursor: 5 });
 		expect(transcriptOf(mainSession)).toEqual(historyOf(mainHistory));
 	});
 });
@@ -282,13 +337,9 @@ describe("helper requests that reuse the agent's sessionId", () => {
 		expect(sessionState(main)).toEqual(before);
 	});
 
-	// No OMP 19.2.1 helper sends the agent's history under its sessionId with
-	// the agent's providerSessionState, but if one did, it would run as the
-	// agent's turn and append its own exchange to the agent's session.
-	// port-baseline then took the agent's next turn for a helper and ran it
-	// without any history. Now that turn sees its history diverge from the
-	// synced one and rebuilds the session without the helper's exchange.
-	test("a helper with a longer context does not take over the agent's session", async () => {
+	// A request with the owner's map is an owned turn. If OMP omits that
+	// exchange from the next call, only the unchanged prefix may carry over.
+	test("history past an omitted owned turn is excluded from the next transcript", async () => {
 		const { main, history, session } = await agentWithHistory("helper-longer");
 		claude.next(async function* (cc) { yield* cc.reply("Looks fine."); });
 		await run(main, [...history, user("Advisor: review the conversation so far")]);
@@ -296,8 +347,10 @@ describe("helper requests that reuse the agent's sessionId", () => {
 		const next = [...history, user("continue")];
 		claude.next(async function* (cc) { yield* cc.reply("ok"); });
 		next.push(await run(main, next));
-		expect(claude.queries.at(-1)!.options.resume).toBe(session);
-		expect(transcriptOf(session)).toEqual(historyOf(next));
+		const fork = claude.queries.at(-1)!.options.resume;
+		expect(fork).not.toBe(session);
+		expect(transcriptOf(session)).toContain("user: Advisor: review the conversation so far");
+		expect(transcriptOf(fork)).toEqual(historyOf(next));
 	});
 });
 

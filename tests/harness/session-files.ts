@@ -1,7 +1,7 @@
 // Claude Code session files for the harness.
 //
 // The bridge writes real JSONL files through cc-session-io into a temporary
-// CLAUDE_CONFIG_DIR. The module mock wraps createSession and deleteSession so
+// CLAUDE_CONFIG_DIR. The module mock observes bridge exports and deletions so
 // tests can see when the bridge rebuilt a session. The fake Claude Code uses
 // `realIo` directly, so its own appends are not recorded as bridge calls.
 
@@ -14,7 +14,7 @@ import { MCP_TOOL_PREFIX } from "../../src/skills.ts";
 export const realIo = { ...io };
 
 export type SessionCall =
-	| { op: "create"; sessionId: string; requestedId?: string; records: number }
+	| { op: "create"; sessionId: string; records: number }
 	| { op: "delete"; sessionId: string };
 
 export const sessionCalls: SessionCall[] = [];
@@ -22,14 +22,12 @@ export const sessionCalls: SessionCall[] = [];
 export function recordingSessionIo() {
 	return {
 		...realIo,
-		createSession(opts: Parameters<typeof io.createSession>[0]) {
-			const session = realIo.createSession(opts);
-			const save = session.save.bind(session);
-			session.save = () => {
-				save();
-				sessionCalls.push({ op: "create", sessionId: session.sessionId, requestedId: opts.sessionId, records: session.messages.length });
-			};
-			return session;
+		serializeJsonl(records: Parameters<typeof io.serializeJsonl>[0]) {
+			const id = records[0]?.sessionId;
+			if (typeof id === "string") sessionCalls.push({
+				op: "create", sessionId: id, records: records.filter(record => record.type === "user" || record.type === "assistant").length,
+			});
+			return realIo.serializeJsonl(records);
 		},
 		deleteSession(sessionId: string, projectPath: string, claudeDir?: string) {
 			sessionCalls.push({ op: "delete", sessionId });

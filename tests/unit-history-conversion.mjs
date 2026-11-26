@@ -34,6 +34,29 @@ test("imported tool calls and results share the sanitized ID and retain the hist
 	assert.equal(sanitizedIds.get(id), "call_1_step_2");
 });
 
+test("synthetic prompts and a batched multimodal result retain their original indices", () => {
+	const image = { type: "image", mimeType: "image/png", data: "aGVsbG8=" };
+	const { anthropicMessages, origins } = convertPiMessages([
+		{ role: "developer", content: "continue", synthetic: true },
+		{ role: "assistant", content: [
+			{ type: "toolCall", id: "a", name: "read", arguments: {} },
+			{ type: "toolCall", id: "b", name: "read", arguments: {} },
+		] },
+		{ role: "toolResult", toolCallId: "a", isError: false, content: [{ type: "text", text: "plain text" }] },
+		{ role: "developer", content: [] },
+		{ role: "toolResult", toolCallId: "b", isError: false, content: [image, { type: "text", text: "description" }] },
+	]);
+	assert.deepEqual(origins, [[0], [1], [2, 4]]);
+	assert.deepEqual(anthropicMessages[0], { role: "user", content: "continue" });
+	assert.deepEqual(anthropicMessages[2].content, [
+		{ type: "tool_result", tool_use_id: "a", content: "plain text", is_error: false },
+		{ type: "tool_result", tool_use_id: "b", content: [
+			{ type: "image", source: { type: "base64", media_type: image.mimeType, data: image.data } },
+			{ type: "text", text: "description" },
+		], is_error: false },
+	]);
+});
+
 test("tool schemas retain enums inside nested arrays", () => {
 	const schema = z.object(jsonSchemaToZodShape({
 		type: "object",

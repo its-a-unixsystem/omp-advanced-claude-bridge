@@ -54,13 +54,13 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 ## Features
 
 - **Claude Code as a provider** — pick Opus / Sonnet / Haiku / Fable from `/model` under `advanced-claude-bridge/*`; tool calls render in OMP's TUI like any native provider.
-- **Isolated per-session core** — each OMP provider session owns its own Claude Code session, resume cursor, history sync, and deferred steer replay, so in-process subagents and `/btw` side requests never collide with the main agent.
+- **Isolated per-session core** — each OMP provider session owns its own Claude Code transcript, history sync, and deferred steer replay, so in-process subagents and `/btw` side requests never collide with the main agent.
 - **Side-by-side namespacing** — uses `advanced-claude-bridge`, `AskClaudeAdvanced`, `advanced-claude-bridge.json`, and `advanced-claude-bridge-tools` so it can be installed alongside upstream `omp-claude-bridge`.
 - **Oh My Pi 19.2+ native integration** — built against OMP's bundled Anthropic catalog, native streaming/tool-schema APIs, and reactive TUI previews.
 - **AskClaudeAdvanced delegation tool** — from any other provider, hand a task or question to Claude Code (read-only, no-tools, or full read/write/bash), optionally in an isolated session.
 - **Switchable context window** — pick **1M** or **200K** directly in `/model`, or set a global default (`auto`, `1m`, `200k`) built on upstream `omp-claude-bridge`'s measured per-model policies.
-- **Session resume & history sync** — conversations survive across turns and reconnects, including signed thinking preserved from OMP's native Anthropic provider.
-- **Skills + per-directory AGENTS.md forwarding** — your OMP skills and working-directory `AGENTS.md` context files are passed into Claude Code's system prompt.
+- **Session resume & history sync.** File-backed primary OMP sessions can resume their native Claude Code transcript after a restart and keep unchanged history on rewinds. History imports preserve signed thinking from OMP's native Anthropic provider.
+- **Full OMP system prompt.** Claude Code gets OMP's skills, AGENTS.md, and instructions from OMP extensions or the command line.
 - **Thinking support** — effort levels map through to Claude Code, including `xhigh` on Sonnet models.
 - **MCP tool bridging** with strict-config isolation by default.
 
@@ -213,6 +213,8 @@ The extension reads `~/.omp/agent/advanced-claude-bridge.json` and the project's
     "contextWindow": "auto",
     "plan": "pro",
     "longContextExtraUsage": false,
+    "autoMemoryEnabled": false,
+    "systemPromptPreset": "claude_code",
     "strictMcpConfig": true
   }
 }
@@ -238,16 +240,34 @@ The extension reads `~/.omp/agent/advanced-claude-bridge.json` and the project's
 | `contextWindow` | `"auto"` | `"auto"`, `"1m"`, or `"200k"`. See [Context window controls](#context-window-controls). |
 | `plan` | `"pro"` | Set to `"max"` to enable Opus 4.6 at 1M in `auto`. |
 | `longContextExtraUsage` | `false` | Opt into metered 1M usage (enables Sonnet 4.6 1M everywhere, Opus 4.6 1M on Pro). |
-| `appendSystemPrompt` | `true` | Append OMP's AGENTS.md and skills. |
-| `settingSources` | — | Claude Code filesystem settings to load; only applied when `appendSystemPrompt: false`. |
+| `autoMemoryEnabled` | `false` | Let Claude Code use its own auto-memory on provider turns, excluding side requests and helpers. |
+| `systemPromptPreset` | `"claude_code"` | Append OMP's full rendered system prompt to Claude Code's preset. Set `false` or `null` to use the OMP prompt alone. The bridge warns and ignores invalid values. |
+| `appendSystemPrompt` | — | Deprecated. Set `false` to use Claude Code's preset without forwarding OMP's prompt, if you have not set `systemPromptPreset`. |
+| `settingSources` | `["user", "project"]` in legacy opt-out mode | Claude Code filesystem settings to load in legacy opt-out mode. |
 | `strictMcpConfig` | `true` | Block MCP servers from `~/.claude.json` / `.mcp.json`. Cloud MCP is always blocked. |
 | `pathToClaudeCodeExecutable` | — | Path to the `claude` binary, if the bundled one can't run on your OS/filesystem. |
+
+An explicit `systemPromptPreset` takes precedence over `appendSystemPrompt`. Remove the deprecated key to use the default and forward the full rendered OMP prompt, including `--append-system-prompt` and extension changes. With prompt forwarding on, the bridge does not load `settingSources` or add Claude Code's Git instructions.
+
+The bridge uses Claude Code's `"default"` output style for provider and helper queries. AskClaudeAdvanced and isolated helper requests keep auto-memory off even when provider turns opt in.
+
+A longer system prompt uses more input tokens. The bridge has not measured any billing effect from changing the preset. See [Anthropic's Agent SDK plan guidance](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) for billing details.
 
 ## How it works
 
 OMP's built-in tools are bridged to Claude Code and back via an in-process MCP server (`advanced-claude-bridge-tools`), so from your side it behaves like any other OMP provider. On registration, the extension reads OMP's bundled Anthropic catalog and applies the bridge's context-window policy in [`src/models.ts`](src/models.ts).
 
-Each OMP provider session keeps its own state in `providerSessionState` (managed by [`src/bridge-session.ts`](src/bridge-session.ts), [`src/query-state.ts`](src/query-state.ts), and [`src/history-sync.ts`](src/history-sync.ts)), ensuring concurrent subagents and `/btw` side requests never share or overwrite the main session's Claude Code resume cursor.
+Each OMP provider session keeps its own state in `providerSessionState` (managed by [`src/bridge-session.ts`](src/bridge-session.ts), [`src/query-state.ts`](src/query-state.ts), and [`src/history-sync.ts`](src/history-sync.ts)). Concurrent subagents and `/btw` requests do not share the main session's native transcript.
+
+### Session history
+
+The bridge resumes the native Claude Code transcript while OMP's history and rendered system prompt still match. When you rewind, edit, or fork a session, the bridge verifies the native transcript prefix before copying it up to a point with no unanswered tool calls. This preserves records such as `@file` attachments and imports the changed suffix, including images. A system prompt change or a failed prefix check rebuilds from OMP history.
+
+The bridge saves resume mappings for file-backed primary OMP sessions under `~/.omp/agent/advanced-claude-bridge/sessions/` (or under the active OMP agent directory) with file mode `0600`. Claude Code stores the transcripts in its own project directory. If the mapping is missing or corrupt, or its transcript is missing, the bridge rebuilds from OMP history. Subagents, `/btw` requests, and AskClaudeAdvanced do not write the primary session's mapping or transcript.
+
+### Rate-limit metadata
+
+The bridge exposes Claude Code's rate-limit events as `anthropic-ratelimit-unified-*` headers through the provider response callback (`onResponse(response, model, signal)`), which OMP publishes as `after_provider_response`. Utilization stays fractional (`0.8` means 80%), and reset values are Unix seconds. The latest event received between tool turns goes to the continuation of the query that received it, not an unrelated request. OMP's built-in `/usage` does not use these headers for this custom provider.
 
 ## Debugging
 
