@@ -31,10 +31,12 @@ import { describeRateLimitFailure, isSessionLimitNotice, rateLimitNotice, rateLi
 // - ENABLE_CLAUDEAI_MCP_SERVERS=0: keep claude.ai cloud MCP servers out of OMP sessions.
 // - DISABLE_AUTO_COMPACT=1: OMP owns compaction and history truth.
 // - CLAUDE_CODE_ELEGANT_MEADOW=0: disable CC 2.1.308+ per-request API logs in session files.
+// - CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge: override the Agent SDK default ("sdk-ts") and any inherited host entrypoint.
 const CC_CHILD_ENV = {
 	ENABLE_CLAUDEAI_MCP_SERVERS: "0",
 	DISABLE_AUTO_COMPACT: "1",
 	CLAUDE_CODE_ELEGANT_MEADOW: "0",
+	CLAUDE_CODE_ENTRYPOINT: "omp-claude-bridge",
 } as const;
 
 function calculateCost(model: Model<any>, usage: Usage): Usage["cost"] {

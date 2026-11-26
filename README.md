@@ -302,6 +302,8 @@ This project is a **fork** with the following lineage:
 See [NOTICE](NOTICE) for full attribution.
 
 > Anthropic [announced and then unannounced](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) a change to how Agent-SDK tool usage is billed. As of June 15, 2026 it uses your subscription quota just like Claude Code direct.
+>
+> To avoid Anthropic's higher 5-hour session-limit metering on the Agent SDK's default `sdk-ts` entrypoint ([anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074)), the bridge sets `CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge` on every spawned Claude Code subprocess (overriding any inherited host value).
 
 ## License
 

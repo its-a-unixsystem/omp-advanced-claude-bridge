@@ -64,6 +64,7 @@ test("shared mode imports the conversation and resumes it", async () => {
 	expect(query.prompt).toBe("second opinion?");
 	expect(query.options.resume).toBe(query.sessionId);
 	expect(query.options.persistSession).toBe(false);
+	expect(query.options.env.CLAUDE_CODE_ENTRYPOINT).toBe("omp-claude-bridge");
 	expect(transcriptOf(query.sessionId, askCwd)).toBeNull();
 	expect(query.options.settings).toEqual({ autoMemoryEnabled: false, outputStyle: "default" });
 });

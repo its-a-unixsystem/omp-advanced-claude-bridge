@@ -78,6 +78,18 @@ describe("main agent", () => {
 		expect(transcriptOf(ccSession)).toEqual(historyOf(second));
 	});
 
+	test("provider queries set CLAUDE_CODE_ENTRYPOINT and override an inherited host value", async () => {
+		const previous = process.env.CLAUDE_CODE_ENTRYPOINT;
+		process.env.CLAUDE_CODE_ENTRYPOINT = "claude-desktop";
+		try {
+			await turn(agent("entrypoint-main"), [], "hi", "hello");
+			expect(claude.queries[0].options.env.CLAUDE_CODE_ENTRYPOINT).toBe("omp-claude-bridge");
+		} finally {
+			if (previous === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+			else process.env.CLAUDE_CODE_ENTRYPOINT = previous;
+		}
+	});
+
 	test("history from another provider is imported before the first turn", async () => {
 		const main = agent("import-main");
 		const history = await turn(main, [user("earlier"), assistant("from another model")], "now you", "ok");

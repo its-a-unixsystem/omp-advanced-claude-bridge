@@ -35,6 +35,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `appendSystemPrompt: false` still opts out when no preset is set.
 
 ### Fixed
+- Set `CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge` on all Claude Code
+  subprocesses instead of falling back to the Agent SDK default (`sdk-ts`) or
+  inheriting a parent host entrypoint, avoiding the inflated 5-hour
+  session-limit burn rate ([anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074)).
 - Each OMP provider session now keeps its own Claude Code session. In-process
   subagents and `/btw` side requests no longer overwrite the main agent's
   session state, get their prior history imported, and replay deferred steers
