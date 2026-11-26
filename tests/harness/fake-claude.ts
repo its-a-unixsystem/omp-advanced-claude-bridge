@@ -102,8 +102,11 @@ export class FakeQuery implements AsyncIterable<Message> {
 	#isClosed = false;
 	#exited: Promise<void> = Promise.resolve();
 
-	constructor(readonly prompt: unknown, readonly options: Message, readonly script: Script | undefined, readonly index: number) {
-		this.sessionId = options.resume ?? randomUUID();
+	prompt: unknown;
+
+	constructor(private readonly input: unknown, readonly options: Message, readonly script: Script | undefined, readonly index: number) {
+		this.prompt = input;
+		this.sessionId = options.resume ?? options.sessionId ?? randomUUID();
 	}
 
 	get closedPromise(): Promise<void> { return this.#closed.promise; }
@@ -163,12 +166,17 @@ export class FakeQuery implements AsyncIterable<Message> {
 		}
 		if (!this.script) throw new Error(`fake claude: no script queued for query #${this.index}`);
 		yield { type: "system", subtype: "init", session_id: this.sessionId, uuid: randomUUID() };
-		if (typeof this.prompt === "string") {
-			const prompt = this.prompt;
+		if (typeof this.input === "string") {
+			const prompt = this.input;
 			this.persist((session) => session.addUserMessage(prompt));
 		} else {
-			for await (const input of this.prompt as AsyncIterable<Message>) {
-				this.persist((session) => session.addUserMessage(input.message.content as UserContentBlock[]));
+			for await (const input of this.input as AsyncIterable<Message>) {
+				const content = input.message.content as string | UserContentBlock[];
+				this.prompt = content;
+				this.persist((session) => {
+					session.addUserMessage(content);
+					if (input.uuid) session.messages.at(-1)!.uuid = input.uuid;
+				});
 			}
 		}
 		let lastText = "";

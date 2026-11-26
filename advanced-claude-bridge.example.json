@@ -8,6 +8,8 @@
     "contextWindow": "auto",
     "plan": "pro",
     "longContextExtraUsage": false,
+    "autoMemoryEnabled": false,
+    "systemPromptPreset": "claude_code",
     "strictMcpConfig": true
   }
 }

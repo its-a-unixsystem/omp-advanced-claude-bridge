@@ -2,25 +2,11 @@
 //
 // Extracted from index.ts so tests can import without activating the extension.
 
-import type { ProviderSessionState } from "@oh-my-pi/pi-ai";
+import type { ProviderResponseMetadata, ProviderSessionState } from "@oh-my-pi/pi-ai";
 import { PROVIDER_ID } from "./convert.js";
-import type { SyncedHistory } from "./history-sync.js";
+import type { SessionState } from "./history-sync.js";
 import type { QueryContext } from "./query-state.js";
-
-export interface SessionState {
-	sessionId: string;
-	cwd: string;
-	// The OMP history the Claude Code session holds: its first `cursor`
-	// messages, fingerprinted by `prefix` (see history-sync.ts). The next
-	// request reuses the session only if its history starts with them.
-	cursor: number;
-	prefix: string;
-	// OMP appends this reply after the turn; Claude Code already has it.
-	reply?: { timestamp: number; digest: string };
-	// AskClaude writes a prompt and reply that aren't OMP conversation turns.
-	// The idle transcript can be rebuilt in place but must not be resumed as-is.
-	needsRebuild?: boolean;
-}
+import type { SessionStore } from "./session-store.js";
 
 export interface TranscriptLease {
 	state: SessionState | null;
@@ -35,25 +21,51 @@ export class BridgeSession implements ProviderSessionState {
 	closed = false;
 	readonly queries = new Set<QueryContext>();
 	#writer?: symbol;
-	// The providerSessionState map that holds this session. Unset for entries
-	// only AskClaude created.
-	states?: Map<string, ProviderSessionState>;
-	constructor(readonly id?: string) {}
+	#releasePersistence?: () => void;
+	pendingResponse?: ProviderResponseMetadata;
+
+	constructor(readonly id?: string, private readonly states?: Map<string, ProviderSessionState>) {}
 
 	// Check out the idle transcript. An overlapping turn gets no prior state
 	// and builds a separate transcript. Only the latest writer may publish
 	// its state, regardless of the order in which the turns finish.
-	beginTranscript(): TranscriptLease {
+	beginTranscript(persistence?: { store: SessionStore; branchSource?: string }): TranscriptLease {
 		const writer = Symbol();
+		const { store, branchSource } = persistence ?? {};
+		const id = this.id;
+		const release = id && store ? store.acquire(id, this) : undefined;
+		let state = this.state;
+		if (!this.#writer && !state && release && store && id) {
+			state = store.load(id);
+			if (!state && branchSource) {
+				const source = store.load(branchSource);
+				if (source) state = { ...source, dirty: true };
+			}
+		}
+		if (persistence && !release && state) state = { ...state, dirty: true };
 		this.#writer = writer;
-		const state = this.state;
+		this.#releasePersistence = release && (() => {
+			try {
+				if (state && id) store?.save(id, { ...state, dirty: true });
+			} finally {
+				release();
+			}
+		});
 		this.state = null;
 		return {
 			state,
 			finish: (next: SessionState | null) => {
 				if (this.#writer !== writer) return;
 				this.#writer = undefined;
+				this.#releasePersistence = undefined;
 				this.state = next;
+				if (release && id) {
+					try {
+						if (next) store?.save(id, next);
+					} finally {
+						release();
+					}
+				}
 			},
 		};
 	}
@@ -65,40 +77,29 @@ export class BridgeSession implements ProviderSessionState {
 		this.closed = true;
 		this.#writer = undefined;
 		this.state = null;
-		if (this.id && bridgeSessions.get(this.id) === this) bridgeSessions.delete(this.id);
+		this.pendingResponse = undefined;
+		this.#releasePersistence?.();
+		this.#releasePersistence = undefined;
+		const key = this.id ? `${PROVIDER_ID}:${this.id}` : undefined;
+		if (key && this.states?.get(key) === this) this.states.delete(key);
 		for (const query of this.queries) query.abort();
 	}
-
 	// OMP calls this on every entry of the agent's map when a side request
 	// (other than a multi-turn side conversation) ends. A side request whose
 	// answer was a tool call still has its query waiting for a tool result.
 	releaseSession(sessionId: string): void {
 		if (sessionId !== this.id) return;
 		this.close();
-		const key = `${PROVIDER_ID}:${sessionId}`;
-		if (this.states?.get(key) === this) this.states.delete(key);
 	}
 }
 
-export const bridgeSessions = new Map<string, BridgeSession>();
-
-// The session a provider request owns. Only a request that brings its agent's
-// providerSessionState owns one. OMP helpers (judges, the title model,
-// auto-repair) reuse the agent's sessionId without the map; they get null and
-// run without touching the agent's session.
+// Helpers without an owner map never touch an agent's transcript.
 export function bridgeSession(sessionId: string | undefined, states: Map<string, ProviderSessionState> | undefined): BridgeSession | null {
 	if (!sessionId || !states) return null;
-	const session = sharedSession(sessionId);
-	session.states = states;
-	states.set(`${PROVIDER_ID}:${sessionId}`, session);
-	return session;
-}
-
-// AskClaude shared mode: tools see neither the provider sessionId nor the map,
-// so AskClaude looks the session up by the session-file id.
-export function sharedSession(sessionId: string | undefined): BridgeSession {
-	if (!sessionId) return new BridgeSession();
-	const session = bridgeSessions.get(sessionId) ?? new BridgeSession(sessionId);
-	bridgeSessions.set(sessionId, session);
+	const key = `${PROVIDER_ID}:${sessionId}`;
+	const existing = states.get(key);
+	if (existing instanceof BridgeSession && !existing.closed) return existing;
+	const session = new BridgeSession(sessionId, states);
+	states.set(key, session);
 	return session;
 }

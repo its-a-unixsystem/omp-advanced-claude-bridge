@@ -2,8 +2,7 @@
 // Extracted so they can be tested without pulling in the full extension runtime.
 
 import type { Message as PiMessage } from "@oh-my-pi/pi-ai";
-import type { Message as SessionMessage } from "cc-session-io";
-
+import type { ContentBlock, ImageBlock, Message as SessionMessage, TextBlock, ToolResultBlock } from "cc-session-io";
 export const PROVIDER_ID = "advanced-claude-bridge";
 
 /** Roles Claude Code receives as a user turn. OMP sends `developer` messages
@@ -63,40 +62,45 @@ export function messageContentToText(
 	return hasText ? parts.join("\n") : "";
 }
 
+function promptBlocks(content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>): Array<TextBlock | ImageBlock> {
+	const blocks: (TextBlock | ImageBlock)[] = [];
+	for (const block of content) {
+		if (block.type === "text" && block.text) blocks.push({ type: "text", text: block.text });
+		else if (block.type === "image" && block.data && block.mimeType) {
+			blocks.push({ type: "image", source: { type: "base64", media_type: block.mimeType, data: block.data } });
+		}
+	}
+	return blocks;
+}
+
 /** Convert OMP message array to Anthropic API format. */
 export function convertPiMessages(
 	messages: PiMessage[],
 	customToolNameToSdk?: Map<string, string>,
-): { anthropicMessages: SessionMessage[]; sanitizedIds: Map<string, string> } {
-	const anthropicMessages = [];
-	const sanitizedIds = new Map();
+): { anthropicMessages: SessionMessage[]; sanitizedIds: Map<string, string>; origins: number[][] } {
+	const anthropicMessages: SessionMessage[] = [];
+	const sanitizedIds = new Map<string, string>();
+	const origins: number[][] = [];
+	let results: ToolResultBlock[] | undefined;
+	const push = (index: number, message: SessionMessage) => {
+		anthropicMessages.push(message);
+		origins.push([index]);
+	};
 
-	for (const msg of messages) {
+	for (const [index, msg] of messages.entries()) {
 		if (isPromptRole(msg.role)) {
-			// Skip empty developer messages — they carry nothing Claude Code can replay.
-			if (msg.role !== "user") {
-				const text = typeof msg.content === "string"
-					? msg.content
-					: messageContentToText(msg.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
-				if (!text.trim()) continue;
-			}
-			if (typeof msg.content === "string") {
-				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
-			} else if (Array.isArray(msg.content)) {
-				const parts = [];
-				for (const block of msg.content) {
-					if (block.type === "text" && block.text) parts.push({ type: "text", text: block.text });
-					else if (block.type === "image" && block.data && block.mimeType) {
-						parts.push({ type: "image", source: { type: "base64", media_type: block.mimeType, data: block.data } });
-					}
-				}
-				anthropicMessages.push({ role: "user", content: parts.length ? parts : "[image]" });
-			} else {
-				anthropicMessages.push({ role: "user", content: "[empty]" });
-			}
+			// Skip empty developer messages without splitting a batch of tool results.
+			const parts = Array.isArray(msg.content) ? promptBlocks(msg.content) : undefined;
+			if (msg.role === "developer" && !messageContentToText(msg.content).trim()
+				&& !parts?.some(block => block.type === "image")) continue;
+			results = undefined;
+			const content = typeof msg.content === "string" ? msg.content || "[empty]"
+				: parts?.length ? parts : parts ? "[image]" : "[empty]";
+			push(index, { role: "user", content });
 		} else if (msg.role === "assistant") {
+			results = undefined;
 			const content = Array.isArray(msg.content) ? msg.content : [];
-			const blocks = [];
+			const blocks: ContentBlock[] = [];
 			for (const block of content) {
 				if (block.type === "text" && block.text) {
 					blocks.push({ type: "text", text: block.text });
@@ -113,15 +117,20 @@ export function convertPiMessages(
 				}
 			}
 			if (!blocks.length) blocks.push({ type: "text", text: "[incompatible content omitted]" });
-			anthropicMessages.push({ role: "assistant", content: blocks });
+			push(index, { role: "assistant", content: blocks });
 		} else if (msg.role === "toolResult") {
-			const text = typeof msg.content === "string" ? msg.content : messageContentToText(msg.content);
-			anthropicMessages.push({
-				role: "user",
-				content: [{ type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: text || "", is_error: msg.isError }],
+			if (!results) {
+				results = [];
+				push(index, { role: "user", content: results });
+			} else origins[origins.length - 1].push(index);
+			const content = msg.content;
+			const blocks = Array.isArray(content) && content.some(block => block.type === "image" && block.data && block.mimeType)
+				? promptBlocks(content) : messageContentToText(content);
+			results.push({
+				type: "tool_result", tool_use_id: sanitizeToolId(msg.toolCallId, sanitizedIds), content: blocks, is_error: msg.isError,
 			});
 		}
 	}
 
-	return { anthropicMessages, sanitizedIds };
+	return { anthropicMessages, sanitizedIds, origins };
 }

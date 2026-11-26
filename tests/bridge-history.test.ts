@@ -1,15 +1,15 @@
 // OMP history rewrites: compaction, tree navigation and rewrites no hook
 // reports. Run with `bun test`; see tests/harness/bridge.ts.
 //
-// `test.failing` marks a known defect of port-baseline; the rewrite should
-// turn each one into a plain `test`.
 
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { getAgentDir } from "@oh-my-pi/pi-utils/dirs";
 import { join } from "node:path";
 import type { CompactionPreparation } from "@oh-my-pi/pi-agent-core/compaction";
 import {
-	agent, assistant, claude, createdSince, cwd, emit, extensionContext, historyOf, resetHarness, run, sessionCalls, sessionState, text, transcriptOf, user,
+	agent, assistant, claude, createdSince, emit, extensionContext, historyOf, resetHarness, run, sessionCalls, sessionState, text, transcriptOf, user,
 	type Agent,
 } from "./harness/bridge.ts";
 
@@ -41,132 +41,164 @@ test("an existing conversation keeps signed thinking from the old provider ID", 
 	expect(transcriptOf(sessionState(main).sessionId)).toContain("assistant: thinking old-signature");
 });
 
-test("the provider forwards instructions from the request project's nearest parent", async () => {
-	const project = mkdtempSync(join(cwd, "instructions-"));
-	try {
-		const requestCwd = join(project, "nested");
-		mkdirSync(requestCwd);
-		writeFileSync(join(project, "AGENTS.md"), "Project rule: inspect this workspace first.\n");
-		claude.next(async function* (cc) { yield* cc.reply("Understood."); });
-
-		const reply = await run(agent("request-cwd"), [user("Read the project instructions.")], { cwd: requestCwd });
-		expect(text(reply)).toBe("Understood.");
-		expect(claude.queries[0].options.systemPrompt.append).toBe("# CLAUDE.md\n\nProject rule: inspect this workspace first.");
-	} finally {
-		rmSync(project, { recursive: true, force: true });
-	}
-});
-
 test("the compact hook summarizes in isolated queries and preserves earlier file operations", async () => {
 	const preparation = {
 		firstKeptEntryId: "keep",
 		messagesToSummarize: [{ ...user("We migrated the parser."), role: "user" }],
-		turnPrefixMessages: [],
-		recentMessages: [],
-		isSplitTurn: false,
-		tokensBefore: 250,
+		turnPrefixMessages: [], recentMessages: [], isSplitTurn: false, tokensBefore: 250,
 		fileOps: { read: new Set<string>(), written: new Set<string>(), edited: new Set<string>() },
 		settings: { enabled: true, keepRecentTokens: 100, remoteEnabled: false },
 	} satisfies CompactionPreparation;
-	const event = {
-		preparation,
-		branchEntries: [{ type: "compaction", details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] } }],
-		customInstructions: "Keep migration decisions.",
-	};
+	const event = { preparation, branchEntries: [{ type: "compaction", details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] } }], customInstructions: "Keep migration decisions." };
 	const ctx = extensionContext();
-	expect(await emit("session_before_compact", event, { ...ctx, model: { ...ctx.model, provider: "anthropic" } }))
-		.toEqual([undefined]);
+	expect(await emit("session_before_compact", event, { ...ctx, model: { ...ctx.model, provider: "anthropic" } })).toEqual([undefined]);
 	expect(claude.queries).toHaveLength(0);
-
 	claude.next(async function* (cc) { yield* cc.reply("The parser migration is complete."); });
 	claude.next(async function* (cc) { yield* cc.reply("Parser migration"); });
 	expect(await emit("session_before_compact", event, ctx)).toEqual([{
-		compaction: expect.objectContaining({
-			summary: expect.stringContaining("The parser migration is complete."),
-			firstKeptEntryId: "keep",
-			tokensBefore: 250,
-			details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] },
-		}),
+		compaction: expect.objectContaining({ summary: expect.stringContaining("The parser migration is complete."), firstKeptEntryId: "keep", tokensBefore: 250,
+			details: { readFiles: ["notes.md"], modifiedFiles: ["parser.ts"] } }),
 	}]);
 	expect(claude.queries[0].prompt).toContain("We migrated the parser.");
 	expect(claude.queries[0].prompt).toContain("Keep migration decisions.");
-	expect(claude.queries.every(({ options }) => options.persistSession === false && options.resume === undefined)).toBe(true);
+	expect(claude.queries.every(({ options }) => options.persistSession === false && options.resume === undefined
+		&& options.settings.autoMemoryEnabled === false && options.settings.outputStyle === "default")).toBe(true);
 	expect(createdSince(0)).toEqual([]);
 });
 
-test("after compaction the next turn rebuilds the session in place from the compacted history", async () => {
+test("persisted provider mappings survive shutdown and OMP restarts", async () => {
+	const main = agent(randomUUID());
+	const ctx = extensionContext({ sessionId: main.sessionId });
+	await emit("session_start", {}, ctx);
+	const history = await turn(main, [], "persist", "answer");
+	const session = sessionState(main).sessionId;
+	const before = transcriptOf(session);
+	const path = join(getAgentDir(), "advanced-claude-bridge", "sessions", `${main.sessionId}.json`);
+	expect(readFileSync(path, "utf8")).toContain(session);
+	expect(statSync(path).mode & 0o777).toBe(0o600);
+	await emit("session_shutdown", {}, ctx);
+	for (const state of main.states.values()) state.close();
+	await emit("session_start", {}, ctx);
+	claude.next(async function* (cc) { yield* cc.reply("resumed"); });
+	await run(main, [...history, user("continue")]);
+	expect(claude.queries.at(-1)!.options.resume).toBe(session);
+	expect(transcriptOf(session)).not.toEqual(before);
+});
+
+test("primary branches persist independently, and corrupt mappings rebuild from OMP history", async () => {
+	const main = agent(randomUUID());
+	await emit("session_start", {}, extensionContext({ sessionId: main.sessionId }));
+	const history = await turn(main, [], "one", "original");
+	const original = sessionState(main).sessionId;
+	const directory = join(getAgentDir(), "advanced-claude-bridge", "sessions");
+	const mainMapping = join(directory, `${main.sessionId}.json`);
+	const before = readFileSync(mainMapping, "utf8");
+	const files = readdirSync(directory);
+	await turn(agent(`${main.sessionId}:side:1`, main.states), history, "side", "side reply");
+	await turn(agent(randomUUID()), history, "child", "child reply");
+	expect(readdirSync(directory)).toEqual(files);
+	expect(readFileSync(mainMapping, "utf8")).toBe(before);
+
+	const branch = agent(randomUUID());
+	await emit("session_branch", { reason: "fork" }, extensionContext({ sessionId: branch.sessionId }));
+	const branchHistory = await turn(branch, history.slice(0, 1), "branch", "new reply");
+	const fork = claude.queries.at(-1)!.options.resume;
+	expect(fork).not.toBe(original);
+	expect(transcriptOf(fork)).toEqual(historyOf(branchHistory));
+	expect(transcriptOf(original)).toEqual(historyOf(history));
+	expect(readFileSync(mainMapping, "utf8")).toBe(before);
+
+	for (const state of branch.states.values()) state.close();
+	writeFileSync(join(directory, `${branch.sessionId}.json`), "{ invalid");
+	const rebuilt = await turn(branch, branchHistory, "continue", "recovered");
+	const recovered = claude.queries.at(-1)!.options.resume;
+	expect(recovered).not.toBe(fork);
+	expect(transcriptOf(recovered)).toEqual(historyOf(rebuilt));
+});
+
+test("the full rendered prompt reaches Claude and prompt changes prevent native reuse", async () => {
+	const main = agent("prompt-main");
+	const system = ["OMP system rules", "Instruction added by an extension"];
+	const first = user("hi");
+	claude.next(async function* (cc) { yield* cc.reply("hello"); });
+	const reply = await run(main, [first], {}, system);
+	expect(claude.queries[0].options.systemPrompt).toEqual({
+		type: "preset", preset: "claude_code", append: system.join("\n\n"),
+	});
+	expect(claude.queries[0].options.settings).toEqual({
+		autoMemoryEnabled: false, outputStyle: "default", includeGitInstructions: false,
+	});
+	const original = claude.queries[0].sessionId;
+	claude.next(async function* (cc) { yield* cc.reply("understood"); });
+	const followUp = [first, reply, user("new rules")];
+	followUp.push(await run(main, followUp, {}, [...system, "Updated AGENTS.md"]));
+	const rebuilt = claude.queries[1].options.resume;
+	expect(rebuilt).toBeDefined();
+	expect(rebuilt).not.toBe(original);
+	expect(claude.queries[1].options.systemPrompt.append).toBe([...system, "Updated AGENTS.md"].join("\n\n"));
+	expect(transcriptOf(rebuilt)).toEqual(historyOf(followUp));
+});
+
+test("after compaction the next turn forks from its saved native transcript", async () => {
 	const { main, session } = await agentWithHistory("compact-main");
+	const old = transcriptOf(session)!;
 	await emit("session_compact", { fromExtension: false });
-
-	const mark = sessionCalls.length;
 	const after = await turn(main, [user("Summary: we said hello twice.")], "next", "ok");
-	expect(sessionCalls.slice(mark)).toEqual([
-		{ op: "delete", sessionId: session },
-		{ op: "create", sessionId: session, requestedId: session, records: 1 },
-	]);
-	expect(claude.queries.at(-1)!.options.resume).toBe(session);
-	expect(transcriptOf(session)).toEqual(historyOf(after));
+	const fork = claude.queries.at(-1)!.options.resume;
+	expect(fork).toBeDefined();
+	expect(fork).not.toBe(session);
+	expect(transcriptOf(session)).toEqual(old);
+	expect(transcriptOf(fork!)).toEqual(historyOf(after));
 });
 
-test("after tree navigation the next turn rebuilds the session from the selected branch", async () => {
+test("tree navigation forks the selected native prefix", async () => {
 	const { main, history, session } = await agentWithHistory("tree-main");
+	const old = transcriptOf(session)!;
 	await emit("session_tree");
-
-	const mark = sessionCalls.length;
 	const after = await turn(main, history.slice(0, 2), "a different direction", "ok");
-	expect(createdSince(mark)).toEqual([{ op: "create", sessionId: session, requestedId: session, records: 2 }]);
-	expect(claude.queries.at(-1)!.options.resume).toBe(session);
-	expect(transcriptOf(session)).toEqual(historyOf(after));
+	const fork = claude.queries.at(-1)!.options.resume;
+	expect(fork).toBeDefined();
+	expect(fork).not.toBe(session);
+	expect(transcriptOf(session)).toEqual(old);
+	expect(transcriptOf(fork!)).toEqual(historyOf(after));
 });
 
-test("a turn after another provider answered rebuilds the session with the missed messages", async () => {
+test("a turn after another provider forks from the unchanged native prefix", async () => {
 	const { main, history, session } = await agentWithHistory("switch-main");
+	const old = transcriptOf(session)!;
 	const elsewhere = [...history, user("other model, please"), assistant("answer from another provider")];
-
-	const mark = sessionCalls.length;
 	const after = await turn(main, elsewhere, "back to claude", "ok");
-	expect(createdSince(mark)).toEqual([{ op: "create", sessionId: session, requestedId: session, records: 6 }]);
-	expect(transcriptOf(session)).toEqual(historyOf(after));
+	const fork = claude.queries.at(-1)!.options.resume;
+	expect(fork).toBeDefined();
+	expect(fork).not.toBe(session);
+	expect(transcriptOf(session)).toEqual(old);
+	expect(transcriptOf(fork!)).toEqual(historyOf(after));
 });
 
-// port-baseline compared message counts. A rewrite that keeps the count and
-// no hook reports looked like "nothing new", so the next turn resumed a
-// session holding the old conversation.
-test("a history rewrite no hook reports is detected by content", async () => {
-	const { main, history } = await agentWithHistory("rewrite-main");
-	const rewritten = [history[0], assistant("hello (edited)"), user("more (edited)"), history[3]];
-
-	const after = await turn(main, rewritten, "next", "ok");
-	const resume = claude.queries.at(-1)!.options.resume;
-	expect(transcriptOf(resume)).toEqual(historyOf(after));
-});
-
-test.each(["edited", "removed"])("an %s final reply is not silently kept in the transcript", async (change) => {
+test.each(["edited", "removed"])("an %s final reply forks from the prior safe message", async change => {
 	const { main, history, session } = await agentWithHistory(`reply-${change}`);
+	const old = transcriptOf(session)!;
 	const priors = history.slice(0, -1);
-	if (change === "edited") {
-		priors.push({ ...history.at(-1), content: [{ type: "text", text: "replacement" }] });
-	}
+	if (change === "edited") priors.push({ ...history.at(-1), content: [{ type: "text", text: "replacement" }] });
 	const after = await turn(main, priors, "next", "ok");
-	expect(claude.queries.at(-1)!.options.resume).toBe(session);
-	expect(transcriptOf(session)).toEqual(historyOf(after));
+	const fork = claude.queries.at(-1)!.options.resume;
+	expect(fork).not.toBe(session);
+	expect(transcriptOf(session)).toEqual(old);
+	expect(transcriptOf(fork!)).toEqual(historyOf(after));
 });
-
-// port-baseline's hooks couldn't tell which session they belonged to, so a
-// compaction in the main agent marked every live session for rebuild.
-test("compaction in one session leaves other sessions' Claude Code sessions alone", async () => {
+test("compaction of one agent does not rewrite another agent's native transcript", async () => {
 	const { main } = await agentWithHistory("compact-scope-main");
 	const child = agent("compact-scope-child");
 	const childHistory = await turn(child, [], "task", "working");
 	const childSession = sessionState(child).sessionId;
+	const old = transcriptOf(childSession);
 	await emit("session_compact", { fromExtension: false });
 	await turn(main, [user("Summary: hello.")], "next", "ok");
-
-	const mark = sessionCalls.length;
-	await turn(child, childHistory, "continue", "done");
+	const childNext = await turn(child, childHistory, "continue", "done");
 	expect(claude.queries.at(-1)!.options.resume).toBe(childSession);
-	expect(createdSince(mark)).toEqual([]);
+	expect(transcriptOf(childSession)).toEqual([...old!, ...historyOf(childNext.slice(-2))]);
 });
+
 
 test("an empty rebuild starts clean instead of resuming an unwritten session", async () => {
 	const main = agent("empty-rebuild");

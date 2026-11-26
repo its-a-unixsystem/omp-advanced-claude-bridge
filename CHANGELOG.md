@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Save native Claude Code resume mappings for file-backed primary OMP sessions.
+  Rewinds and forks can keep the matching transcript prefix and import the
+  changed suffix.
+- Report Claude Code rate-limit events through OMP's `after_provider_response`
+  event using `anthropic-ratelimit-unified-*` headers.
+
 ### Changed
 - Forked from [DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)
   as the independently maintained project `omp-advanced-claude-bridge`
@@ -21,12 +28,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   [migration guide](README.md#migrating-from-the-old-names) for side-by-side use.
 - Removed the `change-case` runtime dependency; the direct Anthropic SDK
   dependency is now used only for development types.
+- Use Claude Code's default output style and disable auto-memory for provider
+  and helper queries. Provider turns other than side requests can opt back in.
+- Forward the full OMP system prompt by default. Set `systemPromptPreset` to
+  `false` or `null` to use the OMP prompt without Claude Code's preset. Legacy
+  `appendSystemPrompt: false` still opts out when no preset is set.
 
 ### Fixed
 - Each OMP provider session now keeps its own Claude Code session. In-process
   subagents and `/btw` side requests no longer overwrite the main agent's
-  resume cursor, get their prior history imported, and replay deferred steers
+  session state, get their prior history imported, and replay deferred steers
   against their own session.
+- Isolated helper requests and AskClaudeAdvanced do not change the primary
+  session's transcript or saved mapping.
+- Read SDK rate-limit utilization as a fraction and resets as Unix seconds.
 - Overlapping turns no longer share a writable Claude Code transcript. An
   edited or removed final reply triggers a rebuild, and deferred steers
   preserve images when replayed.

@@ -1,5 +1,4 @@
-// Loads src/index.ts under bun with a fake Claude Agent SDK and recorded
-// cc-session-io calls, and registers it against a fake OMP extension API.
+// Load the bridge against fake OMP and SDK hosts, with real transcript files.
 //
 // The bridge module is loaded once per process, like in OMP, so module-level
 // state carries over between tests. Each test uses its own session ids and
@@ -8,6 +7,7 @@
 import { mock } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
+import { setAgentDir } from "@oh-my-pi/pi-utils/dirs";
 import { join } from "path";
 import { z } from "zod";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -18,7 +18,9 @@ const root = mkdtempSync(join(tmpdir(), "claude-bridge-test-"));
 process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 // HOME keeps the user's config, AGENTS.md and diagnostic log out of the tests.
 process.env.HOME = join(root, "home");
+process.env.PI_CODING_AGENT_DIR = join(process.env.HOME, ".omp", "agent");
 process.env.CLAUDE_CONFIG_DIR = join(root, "claude");
+setAgentDir(process.env.PI_CODING_AGENT_DIR);
 // Debug logs only when a test run asks for them with CLAUDE_BRIDGE_DEBUG_PATH.
 if (!process.env.CLAUDE_BRIDGE_DEBUG_PATH) delete process.env.CLAUDE_BRIDGE_DEBUG;
 export const cwd = join(root, "project");
@@ -62,7 +64,17 @@ const registered = provider.models.find((m: any) => m.id.includes("sonnet")) ?? 
 export const model = { ...registered, api: PROVIDER_ID, provider: PROVIDER_ID, baseUrl: provider.baseUrl };
 
 export function extensionContext(overrides: Record<string, unknown> = {}) {
-	return { agent: { kind: "main" }, ui, model, ...overrides };
+	const sessionId = String(overrides.sessionId ?? "main");
+	return {
+		agent: { kind: "main" }, ui, model, sessionId,
+		getSystemPrompt: () => ["You are a test agent."],
+		sessionManager: {
+			getBranch: () => [],
+			getSessionId: () => sessionId,
+			getSessionFile: () => overrides.sessionFile === null ? undefined : String(overrides.sessionFile ?? `${sessionId}.jsonl`),
+		},
+		...overrides,
+	};
 }
 
 /** Fire an OMP extension event at the bridge's handlers. */
@@ -90,8 +102,8 @@ export function agent(sessionId: string, states = new Map<string, any>()): Agent
 	return { sessionId, states };
 }
 
-export function stream(who: Agent, messages: any[], extra: Record<string, unknown> = {}) {
-	return provider.streamSimple(model, { systemPrompt: ["You are a test agent."], messages, tools: TOOLS }, {
+export function stream(who: Agent, messages: any[], extra: Record<string, unknown> = {}, systemPrompt = ["You are a test agent."]) {
+	return provider.streamSimple(model, { systemPrompt, messages, tools: TOOLS }, {
 		sessionId: who.sessionId,
 		providerSessionState: who.states,
 		cwd,
@@ -101,8 +113,8 @@ export function stream(who: Agent, messages: any[], extra: Record<string, unknow
 
 /** One provider request, finished the way OMP finishes it: the agent loop
  *  does other async work before its next request, so let the bridge settle. */
-export async function run(who: Agent, messages: any[], extra: Record<string, unknown> = {}) {
-	const result = await stream(who, messages, extra).result();
+export async function run(who: Agent, messages: any[], extra: Record<string, unknown> = {}, systemPrompt?: string[]) {
+	const result = await stream(who, messages, extra, systemPrompt).result();
 	await settle();
 	return result;
 }
@@ -155,7 +167,7 @@ export function historyOf(messages: any[]) {
 	return expectedTranscript(messages);
 }
 
-/** Rebuilds (createSession saves) recorded since the given index. */
+/** New transcripts exported by history sync since the given index. */
 export function createdSince(index: number) {
 	return sessionCalls.slice(index).filter((c) => c.op === "create");
 }

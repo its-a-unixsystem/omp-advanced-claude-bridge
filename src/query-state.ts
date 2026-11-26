@@ -6,10 +6,9 @@
 //
 // Extracted from index.ts so tests can import without activating the extension.
 
-import type { AssistantMessage, AssistantMessageEventStream, Model } from "@oh-my-pi/pi-ai";
+import type { AssistantMessage, AssistantMessageEventStream, Context, Model, ProviderResponseMetadata } from "@oh-my-pi/pi-ai";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import type { McpResult } from "./extract-tool-results.js";
-import type { SyncedHistory } from "./history-sync.js";
 import type { RateLimitRejection } from "./rate-limit.js";
 
 export interface PendingToolCall {
@@ -24,9 +23,10 @@ export class QueryContext {
 	claudeSessionId?: string;
 	// Fired by the request's signal or by the query's session closing.
 	readonly #abort = new AbortController();
-	// The latest history OMP sent this query: its first request, then each
-	// tool-result delivery. Becomes the session's sync state when the query ends.
-	synced: SyncedHistory = { cursor: 0, prefix: "" };
+	historyStart = 0;
+	history: Context["messages"] = [];
+	replayedSteer = false;
+	receiveResponse?: (response: ProviderResponseMetadata) => void;
 	pendingToolCalls = new Map<string, PendingToolCall>();
 	pendingResults = new Map<string, McpResult>();
 	turnToolCallIds: string[] = [];
