@@ -1236,6 +1236,8 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// 3. Start SDK query and claim it for this context
 	let wasAborted = false;
 	const sdkQuery = query({ prompt, options: queryOptions });
+	// The query abort targets: sdkQuery, or the continuation replaying a steer.
+	let runningQuery = sdkQuery;
 	queryCtx.activeQuery = sdkQuery;
 	activeQueryContexts.add(queryCtx);
 
@@ -1245,8 +1247,8 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const requestAbort = () => {
 		// interrupt() asks the CLI to stop gracefully; close() kills it immediately.
 		// Both are needed — interrupt alone lets the current API call finish.
-		void sdkQuery.interrupt().catch(() => {});
-		try { sdkQuery.close(); } catch {}
+		void runningQuery.interrupt().catch(() => {});
+		try { runningQuery.close(); } catch {}
 	};
 	const onAbort = () => {
 		wasAborted = true;
@@ -1312,6 +1314,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 					const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
 					const contQuery = query({ prompt: steerPrompt, options: contOptions });
+					runningQuery = contQuery;
 					queryCtx.activeQuery = contQuery;
 
 					debug(`provider: continuation query, model=${cliModel}, resume=${resumeId.slice(0, 8)}, prompt=${steerPrompt.slice(0, 60)}`);
@@ -1330,6 +1333,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 					}
 				}
 			} finally {
+				runningQuery = sdkQuery;
 				queryCtx.activeQuery = sdkQuery;
 				if (syncResult.preserveSession && ownSessionId && ownSessionId !== session.state?.sessionId) {
 					deleteSession(ownSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
@@ -1419,8 +1423,9 @@ async function promptAndWait(
 	let resumeSessionId: string | null = null;
 	if (!options?.isolated && options?.context?.length) {
 		const contextWithPrompt = [...options.context, { role: "user" as const, content: prompt, timestamp: Date.now() }];
-		const sync = syncSession(bridgeSession(options.sessionId), contextWithPrompt as Context["messages"], cwd, undefined, modelId);
-		resumeSessionId = sync.sessionId;
+		const session = bridgeSession(options.sessionId);
+		const sync = syncSession(session, contextWithPrompt as Context["messages"], cwd, undefined, modelId);
+		resumeSessionId = sync.preserveSession ? session.state?.sessionId ?? null : sync.sessionId;
 	}
 
 	// Mode → disallowed tools
