@@ -21,7 +21,7 @@ body:
       label: Steps to reproduce
       placeholder: |
         1. Set provider.contextWindow to "..."
-        2. Run `pi --model claude-bridge/...`
+        2. Run `omp --model advanced-claude-bridge/...`
         3. ...
     validations:
       required: true
@@ -29,7 +29,7 @@ body:
     id: model
     attributes:
       label: Model & context mode
-      placeholder: 'claude-bridge/claude-sonnet-5, contextWindow="1m"'
+      placeholder: 'advanced-claude-bridge/claude-sonnet-5, contextWindow="1m"'
   - type: textarea
     id: env
     attributes:

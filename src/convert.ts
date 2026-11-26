@@ -5,7 +5,7 @@ import type { Message as PiMessage } from "@oh-my-pi/pi-ai";
 import type { Message as SessionMessage } from "cc-session-io";
 import { pascalCase } from "change-case";
 
-export const PROVIDER_ID = "claude-bridge";
+export const PROVIDER_ID = "advanced-claude-bridge";
 
 export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",
@@ -76,7 +76,8 @@ export function convertPiMessages(
 					blocks.push({ type: "text", text: block.text });
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
-					const isAnthropicProvider = msg.provider === PROVIDER_ID || msg.api === "anthropic";
+					// The old provider ID can still occur in saved transcripts.
+					const isAnthropicProvider = msg.api === "anthropic" || msg.provider === PROVIDER_ID || msg.provider === "claude-bridge";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}

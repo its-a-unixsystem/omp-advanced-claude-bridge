@@ -4,7 +4,7 @@
 
 <h1>omp-advanced-claude-bridge</h1>
 
-<p><strong>Run Claude Code as a first-class model provider inside <a href="https://omp.sh">Oh My Pi</a> — with an AskClaude delegation tool and switchable 1M / 200K context windows.</strong></p>
+<p><strong>Run Claude Code as a first-class model provider inside <a href="https://omp.sh">Oh My Pi</a> — with an AskClaudeAdvanced delegation tool and switchable 1M / 200K context windows.</strong></p>
 
 <p>
 <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
@@ -19,7 +19,7 @@
 
 ---
 
-`omp-advanced-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
+`omp-advanced-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaudeAdvanced** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
 
 Authentication and billing run through Claude Code and your Anthropic subscription via the official [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) — this extension never stores credentials.
 
@@ -33,9 +33,10 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 - [Features](#features)
 - [Install](#install)
 - [Quickstart](#quickstart)
+- [Migrating from the old names](#migrating-from-the-old-names)
 - [Context window controls](#context-window-controls)
 - [Models](#models)
-- [AskClaude tool](#askclaude-tool)
+- [AskClaudeAdvanced tool](#askclaudeadvanced-tool)
 - [Configuration reference](#configuration-reference)
 - [How it works](#how-it-works)
 - [Debugging](#debugging)
@@ -46,7 +47,7 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 ## Features
 
 - **Claude Code as a provider** — pick Opus / Sonnet / Haiku / Fable from `/model`; tool calls render in OMP's TUI like any native provider.
-- **AskClaude delegation tool** — from any other provider, hand a task or question to Claude Code (read-only, no-tools, or full read/write/bash), optionally in an isolated session.
+- **AskClaudeAdvanced delegation tool** — from any other provider, hand a task or question to Claude Code (read-only, no-tools, or full read/write/bash), optionally in an isolated session.
 - **Switchable context window** — force **1M** or **200K** globally, or leave it on measured per-model defaults. This is the headline addition in this fork.
 - **Session resume & persistence** — conversations survive across turns and reconnects.
 - **Skills + AGENTS.md forwarding** — your OMP skills and context files are passed into Claude Code's system prompt.
@@ -79,23 +80,33 @@ omp plugin link ./omp-advanced-claude-bridge
 ## Quickstart
 
 1. Install the plugin (above).
-2. In OMP, run `/model` and choose a `claude-bridge/*` model — for example `claude-bridge/claude-sonnet-5`.
+2. In OMP, run `/model` and choose an `advanced-claude-bridge/*` model, for example `advanced-claude-bridge/claude-sonnet-5`.
 3. Work as usual. Tool calls run through OMP's TUI; Claude Code handles the model turn.
 
 To delegate from another provider instead, just ask: *"Ask Claude to review this plan and poke holes in it."*
 
+## Migrating from the old names
+
+This extension can run alongside [upstream omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge). It does not register the old names or read `claude-bridge.json`.
+
+- Replace `claude-bridge/` with `advanced-claude-bridge/` in any `modelRoles`, `enabledModels`, presets, or scripts that should use this extension. Keep the model ID and any `-1m` or `-200k` suffix.
+- For an existing session, use `/model` to select the model under `advanced-claude-bridge`. If upstream is installed, the old selection can still resolve to upstream. Do not edit the transcript.
+- Rename `~/.omp/agent/claude-bridge.json` and `.omp/claude-bridge.json` to `advanced-claude-bridge.json` in their respective directories. Copy instead if upstream still needs the originals. The keys and precedence do not change.
+- Replace explicit calls to this extension's `AskClaude` tool in prompts or skills with `AskClaudeAdvanced`. If you set `askClaude.name`, use a name distinct from upstream's.
+- If you reference SDK tool IDs directly, change `mcp__custom-tools__<tool>` to `mcp__advanced-claude-bridge-tools__<tool>`. OMP tool names such as `read` do not change.
+
 ## Context window controls
 
-Claude Code serves different context windows depending on the exact model id it receives (e.g. bare `claude-fable-5` serves 200K, while `claude-fable-5[1m]` serves 1M). `omp-claude-bridge` exposes both as **separate entries in the `/model` picker**, so you choose the window on demand:
+Claude Code serves different context windows depending on the exact model id it receives (e.g. bare `claude-fable-5` serves 200K, while `claude-fable-5[1m]` serves 1M). This extension exposes both as **separate entries in the `/model` picker**, so you choose the window on demand:
 
-- `claude-bridge/claude-opus-4-8` → **Opus 4.8 (1M)**
-- `claude-bridge/claude-opus-4-8-200k` → **Opus 4.8 (200K)**
+- `advanced-claude-bridge/claude-opus-4-8` → **Opus 4.8 (1M)**
+- `advanced-claude-bridge/claude-opus-4-8-200k` → **Opus 4.8 (200K)**
 
 Switching window is just picking the other entry — no config edit, no reload. Every model appears once per window it supports, the `(1M)` / `(200K)` label is always shown, and each entry reports its true window so OMP's status bar and auto-compaction threshold stay accurate.
 
 ### Default window
 
-The **unsuffixed** id (e.g. `claude-opus-4-8`) maps to a default window; the other window gets a `-1m` / `-200k` suffixed id. `provider.contextWindow` in `~/.omp/agent/claude-bridge.json` picks that default — it no longer hides models, it only decides which window is unsuffixed:
+The **unsuffixed** id (e.g. `claude-opus-4-8`) maps to a default window; the other window gets a `-1m` / `-200k` suffixed id. `provider.contextWindow` in `~/.omp/agent/advanced-claude-bridge.json` picks that default — it no longer hides models, it only decides which window is unsuffixed:
 
 ```json
 {
@@ -111,7 +122,7 @@ The **unsuffixed** id (e.g. `claude-opus-4-8`) maps to a default window; the oth
 | `"1m"` | 1M where the model has a 1M runtime, else its only window. |
 | `"200k"` | 200K where the model has a 200K runtime, else its only window. |
 
-Both windows stay in the picker regardless of this setting (wherever a runtime exists); it only changes which one is the plain, unsuffixed id. So `modelRoles` / `enabledModels` that reference `claude-bridge/claude-opus-4-8` keep working and follow the default.
+Both windows stay in the picker regardless of this setting (wherever a runtime exists); it only changes which one is the plain, unsuffixed id. So `modelRoles` / `enabledModels` that reference `advanced-claude-bridge/claude-opus-4-8` keep working and follow the default.
 
 ### Windows offered per model
 
@@ -140,24 +151,24 @@ Pick any of these from `/model` — each entry shows a `(1M)` or `(200K)` label.
 
 | Picker id (auto) | Window |
 | --------- | ------ |
-| `claude-bridge/claude-fable-5` | 200K |
-| `claude-bridge/claude-fable-5-1m` | 1M |
-| `claude-bridge/claude-opus-4-8` | 1M |
-| `claude-bridge/claude-opus-4-8-200k` | 200K |
-| `claude-bridge/claude-opus-4-7` | 1M |
-| `claude-bridge/claude-opus-4-6` | 200K (1M on Max / Extra Usage) |
-| `claude-bridge/claude-opus-4-6-1m` | 1M |
-| `claude-bridge/claude-sonnet-5` | 1M (supports `xhigh`) |
-| `claude-bridge/claude-sonnet-5-200k` | 200K |
-| `claude-bridge/claude-sonnet-4-6` | 200K (supports `xhigh`) |
-| `claude-bridge/claude-sonnet-4-6-1m` | 1M |
-| `claude-bridge/claude-haiku-4-5` | 200K (cheapest) |
+| `advanced-claude-bridge/claude-fable-5` | 200K |
+| `advanced-claude-bridge/claude-fable-5-1m` | 1M |
+| `advanced-claude-bridge/claude-opus-4-8` | 1M |
+| `advanced-claude-bridge/claude-opus-4-8-200k` | 200K |
+| `advanced-claude-bridge/claude-opus-4-7` | 1M |
+| `advanced-claude-bridge/claude-opus-4-6` | 200K (1M on Max / Extra Usage) |
+| `advanced-claude-bridge/claude-opus-4-6-1m` | 1M |
+| `advanced-claude-bridge/claude-sonnet-5` | 1M (supports `xhigh`) |
+| `advanced-claude-bridge/claude-sonnet-5-200k` | 200K |
+| `advanced-claude-bridge/claude-sonnet-4-6` | 200K (supports `xhigh`) |
+| `advanced-claude-bridge/claude-sonnet-4-6-1m` | 1M |
+| `advanced-claude-bridge/claude-haiku-4-5` | 200K (cheapest) |
 
 Bash commands issued by Claude Code get a 120-second default timeout (matching Claude Code's default), since OMP's bash has no timeout by default.
 
-## AskClaude tool
+## AskClaudeAdvanced tool
 
-Available whenever the active provider is **not** claude-bridge. Your current model can hand work to Claude Code and wait for the result:
+Available whenever the active provider is not `advanced-claude-bridge`. Your current model can hand work to Claude Code and wait for the result:
 
 - "Ask Claude to plan a fix."
 - "If you get stuck, ask Claude for help."
@@ -165,7 +176,7 @@ Available whenever the active provider is **not** claude-bridge. Your current mo
 - "Ask Claude to poke holes in this theory."
 - "Find all the places in the codebase that handle auth."
 
-You can also bake it into a skill or AGENTS.md, e.g. *"Always call AskClaude to review complicated feature implementations before considering the task complete."*
+You can also name the tool in a skill or AGENTS.md: *"Call AskClaudeAdvanced to review the implementation before marking the task complete."*
 
 ### Parameters
 
@@ -179,7 +190,7 @@ You can also bake it into a skill or AGENTS.md, e.g. *"Always call AskClaude to 
 
 ## Configuration reference
 
-Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project OMP config directory `.omp/claude-bridge.json` (project; merged over global). A starter file lives at [`claude-bridge.example.json`](claude-bridge.example.json).
+The extension reads `~/.omp/agent/advanced-claude-bridge.json` and the project's `.omp/advanced-claude-bridge.json`. Project settings override global settings. Start with [`advanced-claude-bridge.example.json`](advanced-claude-bridge.example.json).
 
 ```json
 {
@@ -201,8 +212,8 @@ Config is read from `~/.omp/agent/claude-bridge.json` (global) and the project O
 
 | Key | Default | Description |
 | --- | ------- | ----------- |
-| `enabled` | `true` | Register the AskClaude tool. |
-| `name` | `"AskClaude"` | Override the tool's OMP-side name. |
+| `enabled` | `true` | Register the delegation tool. |
+| `name` | `"AskClaudeAdvanced"` | Override the tool's OMP-side name. |
 | `label` | `"Ask Claude Code"` | Override the TUI label. |
 | `description` | — | Override the tool description shown to the model. |
 | `defaultMode` | `"read"` | `"read"`, `"none"`, or `"full"`. |
@@ -243,7 +254,7 @@ cd omp-advanced-claude-bridge
 bun install
 
 bun run typecheck   # tsc --noEmit
-bun run test        # node --test unit suite
+bun run test        # node unit suite, then the bun bridge suite
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. CI runs typecheck and tests on every push and PR.

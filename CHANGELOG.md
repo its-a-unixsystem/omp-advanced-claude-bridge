@@ -8,11 +8,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Continued as the independent project `omp-advanced-claude-bridge`
-  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>). The
-  provider id `claude-bridge` and the config file names are unchanged.
+  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>).
 - Ported the provider and AskClaude renderer to Oh My Pi 19.2.1. The bridge
   now uses OMP's bundled catalog, native streaming and tool-schema APIs, and
   reactive text nodes for AskClaude's call and result previews.
+- Breaking: use `advanced-claude-bridge/<model>` for saved model selections
+  and `advanced-claude-bridge.json` for global and project configuration.
+  The SDK MCP server is now `advanced-claude-bridge-tools`, and the default
+  delegation tool is `AskClaudeAdvanced`. See the
+  [migration guide](README.md#migrating-from-the-old-names) for side-by-side use.
 
 ### Fixed
 - Each OMP provider session now keeps its own Claude Code session. In-process

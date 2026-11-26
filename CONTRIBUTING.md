@@ -27,7 +27,7 @@ omp plugin link ./omp-advanced-claude-bridge  # Run from the parent directory.
 Enable debug logging while iterating:
 
 ```bash
-CLAUDE_BRIDGE_DEBUG=1 omp models claude-bridge
+CLAUDE_BRIDGE_DEBUG=1 omp models advanced-claude-bridge
 # logs -> ~/.omp/agent/claude-bridge.log
 ```
 
@@ -35,7 +35,7 @@ CLAUDE_BRIDGE_DEBUG=1 omp models claude-bridge
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun run test        # node --test unit suite
+bun run test        # node unit suite, then the bun bridge suite
 ```
 
 Please make sure both pass. CI runs the same two checks on every pull request.
