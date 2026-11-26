@@ -27,12 +27,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subagents and `/btw` side requests no longer overwrite the main agent's
   resume cursor, get their prior history imported, and replay deferred steers
   against their own session.
+- Overlapping turns no longer share a writable Claude Code transcript. An
+  edited or removed final reply triggers a rebuild, and deferred steers
+  preserve images when replayed.
 - Unsuffixed models use their only available context window when the configured
   default is unavailable. Explicit window suffixes still require that window.
 - Claude Agent SDK failure results now surface as errors instead of empty
   successes, including in AskClaude.
-- AskClaude enforces `allowFullMode: false` even for direct calls. Calls that
-  are already aborted do not start Claude Code.
+- AskClaude rejects direct full-mode calls when `allowFullMode` is false
+  without overriding a no-tools default. Already-aborted calls do not start
+  Claude Code.
 - Diagnostic logging no longer interrupts recovery, tool schema enums no longer
   crash provider turns, and history import preserves signed thinking from OMP's
   native Anthropic provider.

@@ -12,6 +12,7 @@
 
 import { randomUUID } from "crypto";
 import { existsSync } from "fs";
+import type { UserContentBlock } from "cc-session-io";
 import { realIo } from "./session-files.ts";
 
 const { createSession, getSessionPath, openSession } = realIo;
@@ -162,7 +163,14 @@ export class FakeQuery implements AsyncIterable<Message> {
 		}
 		if (!this.script) throw new Error(`fake claude: no script queued for query #${this.index}`);
 		yield { type: "system", subtype: "init", session_id: this.sessionId, uuid: randomUUID() };
-		if (typeof this.prompt === "string") this.persist((session) => session.addUserMessage(this.prompt as string));
+		if (typeof this.prompt === "string") {
+			const prompt = this.prompt;
+			this.persist((session) => session.addUserMessage(prompt));
+		} else {
+			for await (const input of this.prompt as AsyncIterable<Message>) {
+				this.persist((session) => session.addUserMessage(input.message.content as UserContentBlock[]));
+			}
+		}
 		let lastText = "";
 		for await (const message of this.script(new ScriptContext(this))) {
 			if (message.type === "assistant") {

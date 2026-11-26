@@ -7,7 +7,8 @@
 
 import * as io from "cc-session-io";
 import { existsSync } from "fs";
-import { convertPiMessages } from "../../src/convert.ts";
+import { convertPiMessages, mapPiToolNameToSdk } from "../../src/convert.ts";
+import { MCP_TOOL_PREFIX } from "../../src/skills.ts";
 
 // Copied at import time, before the harness replaces the module.
 export const realIo = { ...io };
@@ -45,9 +46,14 @@ function blockKeys(role: string, content: string | Block[]): string[] {
 	for (const block of content) {
 		if (block.type === "text") keys.push(`${role}: ${block.text}`);
 		else if (block.type === "thinking") keys.push(`${role}: thinking ${block.signature}`);
-		else if (block.type === "tool_use") keys.push(`${role}: tool_use ${block.id}`);
-		else if (block.type === "tool_result") keys.push(`${role}: tool_result ${block.tool_use_id}`);
-		else if (block.type === "image") keys.push(`${role}: image`);
+		else if (block.type === "tool_use") {
+			const name = block.name.startsWith(MCP_TOOL_PREFIX)
+				? mapPiToolNameToSdk(block.name.slice(MCP_TOOL_PREFIX.length))
+				: block.name;
+			keys.push(`${role}: tool_use ${JSON.stringify([block.id, name, block.input])}`);
+		} else if (block.type === "tool_result") {
+			keys.push(`${role}: tool_result ${JSON.stringify([block.tool_use_id, block.content, Boolean(block.is_error)])}`);
+		} else if (block.type === "image") keys.push(`${role}: image ${JSON.stringify(block.source)}`);
 	}
 	return keys;
 }

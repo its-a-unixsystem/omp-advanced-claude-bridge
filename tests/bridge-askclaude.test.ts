@@ -92,23 +92,24 @@ test("AskClaudeAdvanced refuses to run while its own provider is active", async 
 	expect(claude.queries).toHaveLength(0);
 });
 
-test("allowFullMode false overrides a full default and rejects direct full-mode calls", async () => {
+test.each([
+	["full", false],
+	["none", true],
+] as const)("allowFullMode false handles the %s default and rejects explicit full mode", async (defaultMode, blocksRead) => {
 	const project = mkdtempSync(join(cwd, "config-"));
 	let tool: ReturnType<typeof askClaudeTool>;
 	try {
 		const configDir = join(project, ".omp");
 		mkdirSync(configDir);
-		writeFileSync(join(configDir, "advanced-claude-bridge.json"), '{"askClaude":{"allowFullMode":false,"defaultMode":"full"}}');
-		process.chdir(project);
+		writeFileSync(join(configDir, "advanced-claude-bridge.json"), JSON.stringify({ askClaude: { allowFullMode: false, defaultMode } }));
 		const registration: Pick<ExtensionAPI, "zod" | "on" | "registerProvider" | "registerTool"> = {
 			zod: z,
 			on() {},
 			registerProvider() {},
 			registerTool(registered) { tool = registered; },
 		};
-		activateBridge(registration as ExtensionAPI);
+		activateBridge(registration as ExtensionAPI, project);
 	} finally {
-		process.chdir(askCwd);
 		rmSync(project, { recursive: true, force: true });
 	}
 
@@ -122,6 +123,7 @@ test("allowFullMode false overrides a full default and rejects direct full-mode 
 	const result = await tool.execute("call-default", { prompt: "test", isolated: true }, undefined, undefined, ctx);
 	expect(result.content[0].text).toBe("Read-only answer.");
 	expect(claude.queries[0].options.disallowedTools).toContain("Write");
+	expect(claude.queries[0].options.disallowedTools.includes("Read")).toBe(blocksRead);
 });
 
 test("AskClaude surfaces an SDK failure even after partial output", async () => {

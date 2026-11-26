@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { bridgeSession, bridgeSessions, sharedSession, stateAfterQuery } from "../src/bridge-session.ts";
+import { bridgeSession, bridgeSessions, sharedSession } from "../src/bridge-session.ts";
 import { QueryContext } from "../src/query-state.ts";
 
 test("each provider sessionId owns its Claude Code session", () => {
@@ -59,30 +59,29 @@ test("AskClaude without a sessionId shares nothing", () => {
 
 const synced = { sessionId: "cc", cwd: "/repo", cursor: 2, prefix: "p" };
 
-test("a finished query leaves the history it synced and its reply", () => {
-	const end = { kind: "done", sessionId: "cc-2", cwd: "/other", synced: { cursor: 4, prefix: "q" }, reply: 7 };
-	assert.deepEqual(stateAfterQuery(synced, end), { sessionId: "cc-2", cwd: "/other", cursor: 4, prefix: "q", reply: 7 });
-	assert.equal(stateAfterQuery(synced, { ...end, sessionId: undefined }), synced);
-});
-
-test("an aborted query flags its session for a rebuild under a new id", () => {
-	assert.deepEqual(stateAfterQuery(synced, { kind: "aborted" }), { ...synced, needsRebuild: true, forceRotate: true });
-	assert.equal(stateAfterQuery(null, { kind: "aborted" }), null);
-});
-
-test("a failed query leaves no sync state", () => {
-	assert.equal(stateAfterQuery(synced, { kind: "error" }), null);
+test("only the latest writer can publish a transcript", () => {
+	const session = bridgeSession("overlap", new Map());
+	session.state = synced;
+	const first = session.beginTranscript();
+	assert.equal(first.state, synced);
+	const second = session.beginTranscript();
+	assert.equal(second.state, null);
+	const newer = { ...synced, sessionId: "cc-2" };
+	second.finish(newer);
+	first.finish(null);
+	assert.equal(session.beginTranscript().state, newer);
+	session.close();
 });
 
 test("closing a session aborts its queries, and a query that ends later writes nothing", () => {
 	const session = bridgeSession("closing", new Map());
 	const query = new QueryContext();
 	session.queries.add(query);
+	const transcript = session.beginTranscript();
 	session.close();
 	assert.equal(query.aborted, true);
-	session.endQuery(query, { kind: "aborted" });
+	transcript.finish(synced);
 	assert.equal(session.state, null);
-	assert.equal(session.queries.size, 0);
 });
 
 test("releasing a side request closes only its own session and drops it from the map", () => {

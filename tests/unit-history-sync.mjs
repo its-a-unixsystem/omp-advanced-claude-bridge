@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { historyFingerprint, planSync } from "../src/history-sync.ts";
+import { historyFingerprint, planSync, replyIdentity } from "../src/history-sync.ts";
 
 let clock = 1_000;
 const user = (text) => ({ role: "user", content: text, timestamp: clock++ });
@@ -11,7 +11,7 @@ const toolResult = (id, text = "ok") => ({ role: "toolResult", toolCallId: id, i
 
 /** The sync state a session has after a query that saw `history` and replied with `reply`. */
 function synced(history, reply) {
-	return { sessionId: "cc", cwd: "/repo", ...historyFingerprint(history), reply: reply?.timestamp };
+	return { sessionId: "cc", cwd: "/repo", ...historyFingerprint(history), reply: reply && replyIdentity(reply) };
 }
 
 test("the first request with history rebuilds, a bare prompt starts clean", () => {
@@ -34,12 +34,12 @@ test("the next turn reuses the session past the bridge's own reply", () => {
 	assert.deepEqual(plan.request, historyFingerprint(next));
 });
 
-test("the bridge's reply is matched by timestamp, not content OMP may normalize", () => {
-	const first = [user("edit it")];
-	const reply = toolUse("toolu_1", { file_path: "a.ts", old_string: "x", new_string: "y" });
-	const normalized = { ...reply, content: [{ ...reply.content[0], arguments: { path: "a.ts", edits: [{ oldText: "x", newText: "y" }] } }], duration: 12 };
-	const plan = planSync(synced(first, reply), [...first, normalized, user("next")]);
-	assert.equal(plan.path, "reuse");
+test("a changed tool payload on the same reply timestamp is not adopted", () => {
+	const first = [user("build it")];
+	const reply = toolUse("toolu_1");
+	const edited = { ...reply, content: [{ ...reply.content[0], arguments: { command: "make clean" } }] };
+	const plan = planSync(synced(first, reply), [...first, edited, user("next")]);
+	assert.equal(plan.path, "rebuild");
 });
 
 test("an assistant message the bridge didn't send is missed history", () => {
@@ -97,7 +97,9 @@ test("a flagged session rebuilds even when the history matches", () => {
 	assert.equal(plan.reason, "flagged");
 });
 
-test("the same history without the bridge's reply still reuses", () => {
+test("a missing reply forces a rebuild even when the earlier history matches", () => {
 	const history = [user("build"), toolUse("toolu_1"), toolResult("toolu_1"), user("also test")];
-	assert.equal(planSync(synced(history, assistant("tested")), [...history, user("next")]).path, "reuse");
+	const request = [...history, user("next")];
+	assert.equal(planSync(synced(history, assistant("tested")), request).path, "rebuild");
+	assert.equal(planSync(synced(history), request).path, "reuse");
 });

@@ -141,6 +141,17 @@ test("a history rewrite no hook reports is detected by content", async () => {
 	expect(transcriptOf(resume)).toEqual(historyOf(after));
 });
 
+test.each(["edited", "removed"])("an %s final reply is not silently kept in the transcript", async (change) => {
+	const { main, history, session } = await agentWithHistory(`reply-${change}`);
+	const priors = history.slice(0, -1);
+	if (change === "edited") {
+		priors.push({ ...history.at(-1), content: [{ type: "text", text: "replacement" }] });
+	}
+	const after = await turn(main, priors, "next", "ok");
+	expect(claude.queries.at(-1)!.options.resume).toBe(session);
+	expect(transcriptOf(session)).toEqual(historyOf(after));
+});
+
 // port-baseline's hooks couldn't tell which session they belonged to, so a
 // compaction in the main agent marked every live session for rebuild.
 test("compaction in one session leaves other sessions' Claude Code sessions alone", async () => {

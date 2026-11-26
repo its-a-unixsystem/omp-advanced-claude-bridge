@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { z } from "zod";
+import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { FakeClaude, createSdkMcpServer } from "./fake-claude.ts";
 import { expectedTranscript, recordingSessionIo, sessionCalls, transcript } from "./session-files.ts";
 
@@ -29,7 +30,15 @@ mock.module("@anthropic-ai/claude-agent-sdk", () => ({ query: claude.query, crea
 mock.module("cc-session-io", () => recordingSessionIo());
 
 const { default: activate } = await import("../../src/index.ts");
-export { activate as activateBridge };
+export function activateBridge(api: ExtensionAPI, project = cwd): void {
+	const previous = process.cwd();
+	process.chdir(project);
+	try {
+		activate(api);
+	} finally {
+		process.chdir(previous);
+	}
+}
 
 type Handler = (event: any, ctx: any) => unknown;
 const handlers = new Map<string, Handler[]>();
@@ -39,7 +48,7 @@ const providers = new Map<string, any>();
 export const notices: Array<{ message: string; level?: string }> = [];
 const ui = { notify: (message: string, level?: string) => notices.push({ message, level }) };
 
-activate({
+activateBridge({
 	on: (event: string, handler: Handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
 	registerProvider: (id: string, config: unknown) => providers.set(id, config),
 	registerTool: (tool: any) => tools.set(tool.name, tool),

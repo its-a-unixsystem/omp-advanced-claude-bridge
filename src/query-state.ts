@@ -7,6 +7,7 @@
 // Extracted from index.ts so tests can import without activating the extension.
 
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@oh-my-pi/pi-ai";
+import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
 import type { McpResult } from "./extract-tool-results.js";
 import type { SyncedHistory } from "./history-sync.js";
 import type { RateLimitRejection } from "./rate-limit.js";
@@ -30,7 +31,7 @@ export class QueryContext {
 	pendingResults = new Map<string, McpResult>();
 	turnToolCallIds: string[] = [];
 	nextHandlerIdx = 0;
-	deferredUserMessages: string[] = [];
+	deferredUserMessages: Array<string | ContentBlockParam[]> = [];
 	// Anthropic message ids whose content arrived as stream events. The SDK
 	// repeats each one as an `assistant` message, which may arrive after a tool
 	// result already started the next turn.

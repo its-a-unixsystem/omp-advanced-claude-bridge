@@ -35,7 +35,7 @@ describe("deferred steers", () => {
 	test("a steer sent with a tool result is replayed after the query, resuming the same session", async () => {
 		const main = agent("steer-main");
 		const history = await startBashTurn(main, await turn(main, [], "hi", "hello"), "toolu_1", "built");
-		const session = sessionState(main).sessionId;
+		const session = claude.queries[1].sessionId;
 
 		claude.next(async function* (cc) { yield* cc.reply("also tested"); });
 		history.push(toolResult("toolu_1", "ok"), user("also run the tests"));
@@ -48,6 +48,21 @@ describe("deferred steers", () => {
 		expect(text(reply)).toBe("also tested");
 		expect(sessionState(main).sessionId).toBe(session);
 		expect(claude.queries.every((q) => q.isClosed)).toBe(true);
+	});
+
+	test.each(["", "look at this"])("a deferred steer preserves images (text: %j)", async (caption) => {
+		const main = agent("image-steer");
+		const history = await startBashTurn(main, [], "toolu_image", "built");
+		const image = { type: "image", mimeType: "image/png", data: "aW1hZ2U=" };
+		const steer = { ...user(""), content: [...(caption ? [{ type: "text", text: caption }] : []), image] };
+		claude.next(async function* (cc) { yield* cc.reply("saw the image"); });
+		history.push(toolResult("toolu_image", "ok"), steer);
+
+		expect(text(await run(main, history))).toBe("saw the image");
+		const original = claude.queries[0];
+		expect(claude.queries[1].options.resume).toBe(original.sessionId);
+		const transcript = transcriptOf(original.sessionId)!;
+		for (const block of historyOf([steer])) expect(transcript).toContain(block);
 	});
 
 	test("a subagent's steer resumes the subagent's session, not the parent's", async () => {
@@ -135,16 +150,19 @@ describe("abort", () => {
 		const main = agent("abort-window-result");
 		const controller = new AbortController();
 		const history = await startBashTurn(main, await turn(main, [], "hi", "hello"), "toolu_1", "never", { signal: controller.signal });
-		const session = sessionState(main).sessionId;
+		const session = claude.queries[1].sessionId;
 		const exit = claude.queries[1].holdExit();
-		controller.abort();
-		await settle();
-
-		history.push(toolResult("toolu_1", "aborted"));
-		const orphan = await Promise.race([stream(main, history).result(), settle().then(() => null)]);
-		expect(orphan?.stopReason).toBe("stop");
-		exit();
-		await settle();
+		let orphan;
+		try {
+			controller.abort();
+			await settle();
+			history.push(toolResult("toolu_1", "aborted"));
+			orphan = await Promise.race([stream(main, history).result(), settle().then(() => null)]);
+			expect(orphan?.stopReason).toBe("stop");
+		} finally {
+			exit();
+			await settle();
+		}
 
 		await turn(main, [...history, orphan], "try again", "ok");
 		const resume = claude.queries.at(-1)!.options.resume;
@@ -160,21 +178,24 @@ describe("abort", () => {
 		const main = agent("abort-window-prompt");
 		const controller = new AbortController();
 		const history = await startBashTurn(main, await turn(main, [], "hi", "hello"), "toolu_1", "never", { signal: controller.signal });
-		const session = sessionState(main).sessionId;
+		const session = claude.queries[1].sessionId;
 		const exit = claude.queries[1].holdExit();
-		controller.abort();
-		await settle();
+		try {
+			controller.abort();
+			await settle();
 
-		claude.next(async function* (cc) { yield* cc.reply("starting over"); });
-		history.push(toolResult("toolu_1", "aborted"), user("do something else"));
-		const mark = sessionCalls.length;
-		const reply = await Promise.race([stream(main, history).result(), settle().then(() => null)]);
-		expect(claude.queries).toHaveLength(3);
-		expect(claude.queries[2].prompt).toBe("do something else");
-		expect(claude.queries[2].options.resume).not.toBe(session);
-		expect(sessionCalls.slice(mark)).not.toContainEqual({ op: "delete", sessionId: session });
-		expect(reply && text(reply)).toBe("starting over");
-		exit();
+			claude.next(async function* (cc) { yield* cc.reply("starting over"); });
+			history.push(toolResult("toolu_1", "aborted"), user("do something else"));
+			const mark = sessionCalls.length;
+			const reply = await Promise.race([stream(main, history).result(), settle().then(() => null)]);
+			expect(claude.queries).toHaveLength(3);
+			expect(claude.queries[2].prompt).toBe("do something else");
+			expect(claude.queries[2].options.resume).not.toBe(session);
+			expect(sessionCalls.slice(mark)).not.toContainEqual({ op: "delete", sessionId: session });
+			expect(reply && text(reply)).toBe("starting over");
+		} finally {
+			exit();
+		}
 	});
 
 	test("abort during a continuation stops it", async () => {
@@ -208,7 +229,7 @@ describe("abort", () => {
 		const main = agent("abort-continuation-state");
 		const controller = new AbortController();
 		const history = await startBashTurn(main, await turn(main, [], "hi", "hello"), "toolu_1", "built", { signal: controller.signal });
-		const session = sessionState(main).sessionId;
+		const session = claude.queries[1].sessionId;
 
 		claude.next(async function* (cc) {
 			yield* cc.reply("starting the tests");

@@ -15,9 +15,9 @@ import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.j
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import type { McpResult } from "./extract-tool-results.js";
 import { QueryContext } from "./query-state.js";
-import { BridgeSession, bridgeSession, bridgeSessions, sharedSession } from "./bridge-session.js";
+import { type BridgeSession, type SessionState, type TranscriptLease, bridgeSession, bridgeSessions, sharedSession } from "./bridge-session.js";
 import { classifyRequest, type RequestKind } from "./request-kind.js";
-import { planSync, historyFingerprint, type SyncedHistory } from "./history-sync.js";
+import { planSync, historyFingerprint, replyIdentity, type SyncedHistory } from "./history-sync.js";
 import { loadConfig, type Config } from "./config.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
@@ -480,9 +480,8 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void 
 //     cache warm.
 //   REBUILD — no session yet, or pi's history has diverged (another provider
 //     took a turn, /compact, tree navigation, an edit or pruned tool output no
-//     hook reports). Wipes the existing session file (if any) and writes a
-//     fresh one containing all prior messages, reusing the same sessionId
-//     across rebuilds so UUIDs stay stable for the lifetime of pi's session.
+//     hook reports). Recreate the transcript from all prior messages. Reuse
+//     an idle sessionId for log correlation; never rewrite a live or aborted one.
 //
 // Why a full rebuild rather than patching:
 //   Injecting deltas into an existing session creates a branch that CC's
@@ -503,20 +502,19 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string): void 
 // message. Returns the session ID to resume from (null if no resume is needed)
 // and the fingerprint of the whole request, which the query reports as synced.
 function syncSession(
-	session: BridgeSession,
+	state: SessionState | null,
 	messages: Context["messages"],
 	cwd: string,
 	customToolNameToSdk?: Map<string, string>,
 	modelId?: string,
 ): { resumeSessionId: string | null; request: SyncedHistory } {
-	const plan = planSync(session.state, messages);
+	const plan = planSync(state, messages);
 
 	if (plan.path === "reuse") {
-		const state = { ...session.state!, ...plan.priors, reply: undefined, cwd };
-		session.state = state;
-		debug(`Case 3: ${plan.adoptedReply ? "advanced cursor past trailing assistant, " : ""}resuming session ${state.sessionId.slice(0, 8)}, cursor=${state.cursor}`);
-		debug(`syncResult: path=reuse sessionId=${state.sessionId} cursor=${state.cursor}`);
-		return { resumeSessionId: state.sessionId, request: plan.request };
+		const { sessionId } = state!;
+		debug(`Case 3: ${plan.adoptedReply ? "advanced cursor past trailing assistant, " : ""}resuming session ${sessionId.slice(0, 8)}, cursor=${plan.priors.cursor}`);
+		debug(`syncResult: path=reuse sessionId=${sessionId} cursor=${plan.priors.cursor}`);
+		return { resumeSessionId: sessionId, request: plan.request };
 	}
 
 	if (plan.path === "clean-start") {
@@ -526,21 +524,15 @@ function syncSession(
 	}
 
 	const priorMessages = messages.slice(0, -1); // everything before the new user prompt
-	const previousSessionId = session.state?.sessionId;
-	const previousCursor = session.state?.cursor ?? 0;
-	// preserveId: rebuild in place (deleteSession + createSession with the
-	// existing UUID), so prompt-cache UUIDs stay stable for log correlation
-	// and for any tools that key off them. Skipped only when there's a
-	// concurrent writer we shouldn't race — see forceRotate docs.
-	const preserveId = previousSessionId !== undefined && !session.state?.forceRotate;
-	if (preserveId) {
-		// Wipe prior jsonl + companion dir (no-op if nothing to wipe).
-		deleteSession(previousSessionId!, cwd, process.env.CLAUDE_CONFIG_DIR);
+	const previousSessionId = state?.sessionId;
+	if (previousSessionId) {
+		// Only an idle transcript can be checked out for an in-place rebuild.
+		deleteSession(previousSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
 	}
 	const created = createSession({
 		projectPath: cwd,
 		claudeDir: process.env.CLAUDE_CONFIG_DIR,
-		...(preserveId ? { sessionId: previousSessionId } : {}),
+		...(previousSessionId ? { sessionId: previousSessionId } : {}),
 		...(modelId ? { model: modelId } : {}),
 	});
 	convertAndImportMessages(created, priorMessages, customToolNameToSdk);
@@ -550,21 +542,17 @@ function syncSession(
 	if (created.messages.length === 0) {
 		debug(`rebuild produced 0 records from ${priorMessages.length} prior message(s); starting clean`);
 		debug(`syncResult: path=clean-start empty-rebuild`);
-		session.state = null;
 		return { resumeSessionId: null, request: plan.request };
 	}
 	created.save();
 	verifyWrittenSession(created.jsonlPath, created.sessionId, created.messages.length, cwd);
-	session.state = { sessionId: created.sessionId, cwd, ...plan.priors };
 	if (previousSessionId === undefined) {
 		debug(`Case 2: first turn with ${priorMessages.length} prior messages → session ${created.sessionId.slice(0, 8)}, ${created.messages.length} records`);
-	} else if (preserveId) {
-		debug(`Case 4: history ${plan.reason} (synced ${previousCursor}, now ${priorMessages.length} total) → rewrote session ${created.sessionId.slice(0, 8)} (same id), ${created.messages.length} records`);
 	} else {
-		debug(`Case 4 post-abort: ${priorMessages.length} total → new session ${created.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${created.messages.length} records`);
+		debug(`Case 4: history ${plan.reason} (synced ${state?.cursor}, now ${priorMessages.length} total) → rewrote session ${created.sessionId.slice(0, 8)} (same id), ${created.messages.length} records`);
 	}
 	debugSessionPaths(`${created.sessionId.slice(0, 8)}`, cwd, created.jsonlPath);
-	debug(`syncResult: path=rebuild sessionId=${created.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : preserveId ? "preserved" : "rotated-post-abort"}`);
+	debug(`syncResult: path=rebuild sessionId=${created.sessionId} priors=${priorMessages.length} ${previousSessionId === undefined ? "first" : "preserved"}`);
 	return { resumeSessionId: created.sessionId, request: plan.request };
 }
 
@@ -1107,10 +1095,10 @@ function deliverToolResults(
 	// tool-result turns. We can't forward it mid-query, so replay it after
 	// the SDK iteration ends.
 	if (steer) {
-		const userPrompt = extractUserPrompt(context.messages);
-		if (userPrompt) {
-			resultCtx.deferredUserMessages.push(userPrompt);
-			debug(`provider: deferred user message for replay after query: ${userPrompt.slice(0, 60)}`);
+		const prompt = extractUserPromptBlocks(context.messages) ?? extractUserPrompt(context.messages);
+		if (prompt) {
+			resultCtx.deferredUserMessages.push(prompt);
+			debug(`provider: deferred user message for replay after query: ${typeof prompt === "string" ? prompt.slice(0, 60) : "[multimodal]"}`);
 		}
 	}
 
@@ -1147,11 +1135,12 @@ function startProviderQuery(
 	const { mcpTools, customToolNameToSdk, customToolNameToPi } = resolveMcpTools(context, excludeToolName);
 	const cwd = options?.cwd ?? process.cwd();
 	let resumeSessionId: string | null = null;
-	if (!owner) {
+	const transcript = owner?.beginTranscript();
+	if (!transcript) {
 		debug(`Case 1 synthetic: clean start for a request without providerSessionState, sessionId=${options?.sessionId ?? "none"}`);
 		debug(`syncResult: path=clean-start helper`);
 	} else {
-		const synced = syncSession(owner, context.messages, cwd, customToolNameToSdk, model.id);
+		const synced = syncSession(transcript.state, context.messages, cwd, customToolNameToSdk, model.id);
 		resumeSessionId = synced.resumeSessionId;
 		queryCtx.synced = synced.request;
 	}
@@ -1187,7 +1176,7 @@ function startProviderQuery(
 
 	const sdkQuery = query({ prompt, options: queryOptions });
 	queryCtx.claudeSessionId = resumeSessionId ?? undefined;
-	runProviderQuery(sdkQuery, queryCtx, owner, model, customToolNameToPi, queryOptions, options?.signal);
+	runProviderQuery(sdkQuery, queryCtx, owner, transcript, model, customToolNameToPi, queryOptions, options?.signal);
 }
 
 type ProviderQueryOptions = Options & { cwd: string; extraArgs: Record<string, string | null> };
@@ -1256,6 +1245,7 @@ function runProviderQuery(
 	sdkQuery: Query,
 	queryCtx: QueryContext,
 	owner: BridgeSession | null,
+	transcript: TranscriptLease | undefined,
 	model: Model<any>,
 	customToolNameToPi: Map<string, string>,
 	queryOptions: ProviderQueryOptions,
@@ -1271,9 +1261,8 @@ function runProviderQuery(
 	// closing), failed, or done after replaying its deferred steers. The end
 	// takes the query out of its session and decides the sync state it leaves
 	// behind before the stream's terminal event lets OMP send its next request.
-	// An abort ends the query right away, while Claude Code may still be
-	// exiting, so a tool result or prompt that arrives meanwhile finds no query
-	// to join and a new turn sees the rotated session.
+	// An abort retires its transcript immediately: the subprocess may still
+	// be flushing writes when the next turn starts.
 	let ended = false;
 	const forwardAbort = () => queryCtx.abort();
 	const endQuery = (end: "done" | "aborted" | "error", error?: unknown) => {
@@ -1281,14 +1270,16 @@ function runProviderQuery(
 		ended = true;
 		signal?.removeEventListener("abort", forwardAbort);
 		queryCtx.deferredUserMessages = [];
-		owner?.endQuery(queryCtx, end === "done"
-			? { kind: "done", sessionId: queryCtx.claudeSessionId, cwd, synced: queryCtx.synced, reply: queryCtx.turnOutput?.timestamp }
-			: { kind: end });
+		owner?.queries.delete(queryCtx);
+		const { claudeSessionId, synced, turnOutput } = queryCtx;
+		transcript?.finish(end === "done" && claudeSessionId
+			? { sessionId: claudeSessionId, cwd, ...synced, reply: turnOutput ? replyIdentity(turnOutput) : undefined }
+			: null);
 		queryCtx.drainToolCalls(end === "aborted" ? "Operation aborted" : "Query ended");
 		debug(`provider: query ended, end=${end}, helper=${helper}, session=${queryCtx.claudeSessionId?.slice(0, 8) ?? "none"}, stopReason=${queryCtx.turnOutput?.stopReason}${error === undefined ? "" : `, error=${errorMessage(error)}`}`);
 		if (owner?.closed) debug(`provider: session ${owner.id} closed, sync state dropped`);
-		else if (owner?.state && end === "done") debug(`provider: synced session=${owner.state.sessionId.slice(0, 8)}, cursor=${owner.state.cursor}`);
-		else if (owner?.state && end === "aborted") debug(`provider: abort marked session ${owner.state.sessionId.slice(0, 8)} needsRebuild + forceRotate`);
+		else if (claudeSessionId && end === "aborted") debug(`provider: retired transcript ${claudeSessionId.slice(0, 8)} after abort`);
+		else if (owner?.state && owner.state.sessionId === claudeSessionId) debug(`provider: synced session=${owner.state.sessionId.slice(0, 8)}, cursor=${owner.state.cursor}`);
 
 		if (end === "aborted") {
 			// Request a graceful interrupt, then close to unblock SDK iteration.
@@ -1310,9 +1301,7 @@ function runProviderQuery(
 		(continuation) => { runningQuery = continuation; })
 		.then(() => endQuery("done"), (error) => endQuery("error", error))
 		.finally(() => {
-			// Final SDK cleanup waits for iteration to end, even when an
-			// abort already closed the running query to make it stop.
-			sdkQuery.close();
+			// Ephemeral helpers are deleted only once iteration has ended.
 			if (helper && queryCtx.claudeSessionId) {
 				deleteSession(queryCtx.claudeSessionId, cwd, process.env.CLAUDE_CONFIG_DIR);
 				debug(`provider: deleted ephemeral helper session ${queryCtx.claudeSessionId.slice(0, 8)}`);
@@ -1332,7 +1321,11 @@ async function consumeAndReplay(
 	endOnToolUse: boolean,
 	setRunningQuery: (continuation: Query) => void,
 ): Promise<void> {
-	await consumeQuery(sdkQuery, customToolNameToPi, model, queryCtx, endOnToolUse);
+	try {
+		await consumeQuery(sdkQuery, customToolNameToPi, model, queryCtx, endOnToolUse);
+	} finally {
+		sdkQuery.close();
+	}
 	while (queryCtx.deferredUserMessages.length > 0 && !queryCtx.aborted) {
 		const steerPrompt = queryCtx.deferredUserMessages.shift()!;
 		const resumeId = queryCtx.claudeSessionId;
@@ -1340,12 +1333,12 @@ async function consumeAndReplay(
 			debug(`WARNING: no session to resume for deferred message, dropping`);
 			break;
 		}
-		debug(`provider: replaying deferred user message: ${steerPrompt.slice(0, 60)}`);
+		const preview = typeof steerPrompt === "string" ? steerPrompt.slice(0, 60) : "[multimodal]";
 		queryCtx.resetTurnState(model);
 		const contOptions = { ...queryOptions, resume: resumeId, ...makeCliDebugOptions("continuation") };
-		const contQuery = query({ prompt: steerPrompt, options: contOptions });
+		const contQuery = query({ prompt: typeof steerPrompt === "string" ? steerPrompt : wrapPromptStream(steerPrompt), options: contOptions });
 		setRunningQuery(contQuery);
-		debug(`provider: continuation query, model=${queryOptions.extraArgs.model}, resume=${resumeId.slice(0, 8)}, prompt=${steerPrompt.slice(0, 60)}`);
+		debug(`provider: continuation query, model=${queryOptions.extraArgs.model}, resume=${resumeId.slice(0, 8)}, prompt=${preview}`);
 		try {
 			await consumeQuery(contQuery, customToolNameToPi, model, queryCtx, false);
 		} finally {
@@ -1379,21 +1372,12 @@ async function promptAndWait(
 	const modelId = model?.id ?? requestedModel;
 	const cliModel = model ? claudeCodeModelId(model, longContextSettings) : modelId;
 
-	// Session resume for shared mode — sync pi's context into the agent's
-	// bridge session. AskClaude only runs while another provider is active, so
-	// any provider state is behind pi's history; syncSession reuses it only
-	// when the context starts with the synced history and rebuilds it otherwise.
-	// The tool context only knows the session-file id, which differs from the
-	// provider sessionId after a fresh session; a miss imports the same history
-	// into its own session.
-	// Note: doesn't update the sync state after completion, so the next
-	// provider call sees a diverged history and triggers a Case 4 rebuild.
-	let resumeSessionId: string | null = null;
-	if (!options?.isolated && options?.context?.length) {
-		const contextWithPrompt = [...options.context, { role: "user" as const, content: prompt, timestamp: Date.now() }];
-		const session = sharedSession(options.sessionId);
-		resumeSessionId = syncSession(session, contextWithPrompt as Context["messages"], cwd, undefined, modelId).resumeSessionId;
-	}
+	// Shared mode imports OMP's conversation into an exclusively checked-out
+	// transcript. The delegation exchange itself is not part of that history.
+	const context = !options?.isolated && options?.context?.length ? options.context : undefined;
+	let transcript: TranscriptLease | undefined;
+	let reusableState: SessionState | null = null;
+	let sdkQuery: Query | undefined;
 
 	// Mode → disallowed tools
 	const disallowedTools = MODE_DISALLOWED_TOOLS[mode] ?? [];
@@ -1413,43 +1397,45 @@ async function promptAndWait(
 	};
 	if (effort) extraArgs["thinking-display"] = "summarized";
 
-	debug("askClaude:",
-		`mode=${mode} model=${modelId} cliModel=${cliModel} effort=${effort ?? "default"}`,
-		`isolated=${options?.isolated ?? false} resume=${resumeSessionId?.slice(0, 8) ?? "none"}`,
-		`skills=${Boolean(skillsBlock)} promptLen=${prompt.length}`);
-
-	const sdkQuery = query({
-		prompt,
-		options: {
-			cwd,
-			env: { ...process.env, ...CC_CHILD_ENV },
-			permissionMode: "bypassPermissions",
-			...(disallowedTools.length ? { disallowedTools } : {}),
-			...(effort ? { effort } : {}),
-			systemPrompt: skillsBlock
-				? { type: "preset", preset: "claude_code", append: skillsBlock }
-				: undefined,
-			settingSources: ["user", "project"] as SettingSource[],
-			extraArgs,
-			...(resumeSessionId ? { resume: resumeSessionId } : {}),
-			...(options?.isolated ? { persistSession: false } : {}),
-			...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
-			...makeCliDebugOptions("askclaude"),
-		},
-	});
-
-	// Abort handling
 	let wasAborted = false;
 	const onAbort = () => {
 		wasAborted = true;
-		sdkQuery.interrupt().catch(() => { try { sdkQuery.close(); } catch {} });
+		void sdkQuery?.interrupt().catch(() => { try { sdkQuery?.close(); } catch {} });
 	};
-
 	let responseText = "";
 	let sdkMessageCount = 0;
 	let resultSubtype: string | undefined;
 
 	try {
+		if (context) transcript = sharedSession(options?.sessionId).beginTranscript();
+		const synced = context && transcript
+			? syncSession(transcript.state, [...context, { role: "user", content: prompt, timestamp: Date.now() }], cwd, undefined, modelId)
+			: undefined;
+		const resumeSessionId = synced?.resumeSessionId;
+		debug("askClaude:",
+			`mode=${mode} model=${modelId} cliModel=${cliModel} effort=${effort ?? "default"}`,
+			`isolated=${options?.isolated ?? false} resume=${resumeSessionId?.slice(0, 8) ?? "none"}`,
+			`skills=${Boolean(skillsBlock)} promptLen=${prompt.length}`);
+
+		sdkQuery = query({
+			prompt,
+			options: {
+				cwd,
+				env: { ...process.env, ...CC_CHILD_ENV },
+				permissionMode: "bypassPermissions",
+				...(disallowedTools.length ? { disallowedTools } : {}),
+				...(effort ? { effort } : {}),
+				systemPrompt: skillsBlock
+					? { type: "preset", preset: "claude_code", append: skillsBlock }
+					: undefined,
+				settingSources: ["user", "project"] as SettingSource[],
+				extraArgs,
+				...(resumeSessionId ? { resume: resumeSessionId } : {}),
+				...(options?.isolated ? { persistSession: false } : {}),
+				...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+				...makeCliDebugOptions("askclaude"),
+			},
+		});
 		if (signal?.aborted) {
 			onAbort();
 			throw new Error("Aborted");
@@ -1487,6 +1473,9 @@ async function promptAndWait(
 			}
 		}
 
+		if (!wasAborted && synced && resumeSessionId) {
+			reusableState = { sessionId: resumeSessionId, cwd, ...synced.request, needsRebuild: true };
+		}
 		const stopReason = wasAborted ? "cancelled" : "stop";
 		debug(`askClaude: done`,
 			`stopReason=${stopReason} resultSubtype=${resultSubtype ?? "none"}`,
@@ -1495,7 +1484,8 @@ async function promptAndWait(
 		return { responseText, stopReason };
 	} finally {
 		signal?.removeEventListener("abort", onAbort);
-		sdkQuery.close();
+		sdkQuery?.close();
+		transcript?.finish(reusableState);
 	}
 }
 
@@ -1595,7 +1585,8 @@ export default function (pi: ExtensionAPI) {
 	// --- AskClaude tool ---
 
 	const allowFull = askConf?.allowFullMode !== false;
-	const defaultMode = allowFull ? askConf?.defaultMode ?? "read" : "read";
+	const configuredMode = askConf?.defaultMode ?? "read";
+	const defaultMode = !allowFull && configuredMode === "full" ? "read" : configuredMode;
 	const defaultIsolated = askConf?.defaultIsolated ?? false;
 
 	const modeValues = allowFull ? ["read", "full", "none"] as const : ["read", "none"] as const;
@@ -1624,7 +1615,7 @@ export default function (pi: ExtensionAPI) {
 		return parsed;
 	};
 
-	let modeDesc = `"read" (default): questions about the codebase — review, analysis, explain. "none": general knowledge only (no file access).`;
+	let modeDesc = `"read": questions about the codebase — review, analysis, explain. "none": general knowledge only (no file access). Default: "${defaultMode}".`;
 	if (allowFull) modeDesc += ` "full": allows writing and bash execution (careful: runs without feedback to pi).`;
 
 	if (askConf?.enabled !== false) {

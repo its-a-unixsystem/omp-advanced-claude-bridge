@@ -15,72 +15,55 @@ export interface SessionState {
 	// request reuses the session only if its history starts with them.
 	cursor: number;
 	prefix: string;
-	// Timestamp of the last query's final reply. OMP appends that message to
-	// its history after the turn, and Claude Code's session already has it.
-	reply?: number;
-	// Force the next syncSession call down the REBUILD path. Set after an abort
-	// left the JSONL in an indeterminate state. REBUILD wipes and rewrites the
-	// file to match pi's current history.
+	// OMP appends this reply after the turn; Claude Code already has it.
+	reply?: { timestamp: number; digest: string };
+	// AskClaude writes a prompt and reply that aren't OMP conversation turns.
+	// The idle transcript can be rebuilt in place but must not be resumed as-is.
 	needsRebuild?: boolean;
-	// Set ONLY after an abort. The killed CC subprocess may still be flushing
-	// a late "[Request interrupted by user]" record to the session JSONL.
-	// Reusing the same sessionId/path would race that orphan write into our
-	// fresh file and break CC's parent-uuid chain on the next resume. When
-	// this flag is set, REBUILD takes a fresh UUID and skips deleteSession
-	// so the orphan writes land on a dead inode. History rewrites (compact,
-	// tree) do NOT set this — there's no concurrent CC writer during those
-	// events, so in-place rebuild (preserve UUID, deleteSession +
-	// createSession) is safe.
-	forceRotate?: boolean;
 }
 
-// How a query ended, and so which sync state it leaves behind.
-export type QueryEnd =
-	// The query finished in Claude Code session `sessionId`, which now holds
-	// `synced` and the final reply OMP is about to append.
-	| { kind: "done"; sessionId?: string; cwd: string; synced: SyncedHistory; reply?: number }
-	// Stopped by its request's signal or by its session closing. The killed
-	// Claude Code process may still write to the session (see forceRotate).
-	| { kind: "aborted" }
-	// Whatever the session holds now is unknown; the next turn starts over.
-	| { kind: "error" };
-
-export function stateAfterQuery(state: SessionState | null, end: QueryEnd): SessionState | null {
-	switch (end.kind) {
-		case "done":
-			if (!end.sessionId) return state;
-			return { sessionId: end.sessionId, cwd: end.cwd, ...end.synced, reply: end.reply };
-		case "aborted":
-			return state ? { ...state, needsRebuild: true, forceRotate: true } : null;
-		case "error":
-			return null;
-	}
+export interface TranscriptLease {
+	state: SessionState | null;
+	finish(next: SessionState | null): void;
 }
 
-// One Claude Code session per OMP provider session. Main agents, in-process
-// subagents and side requests each carry their own provider sessionId, so their
-// sync state and resume ids never mix. Entries live in OMP's providerSessionState
-// map, which closes them on new/switched/fresh sessions and on dispose.
-//
-// The session also owns its running queries. Usually there is one, but nothing
-// stops a second request with the same sessionId and map from starting while a
-// turn waits on a tool. Tool results are routed only to queries of the session
-// that sent them, and a query leaves the session as soon as it ends or is
-// aborted.
+// One sync state per OMP provider session. Main agents, in-process subagents
+// and side requests carry their own provider sessionIds. Tool results are
+// routed only to a live query in the session that sent them.
 export class BridgeSession implements ProviderSessionState {
 	state: SessionState | null = null;
 	closed = false;
 	readonly queries = new Set<QueryContext>();
+	#writer?: symbol;
 	// The providerSessionState map that holds this session. Unset for entries
 	// only AskClaude created.
 	states?: Map<string, ProviderSessionState>;
 	constructor(readonly id?: string) {}
+
+	// Check out the idle transcript. An overlapping turn gets no prior state
+	// and builds a separate transcript. Only the latest writer may publish
+	// its state, regardless of the order in which the turns finish.
+	beginTranscript(): TranscriptLease {
+		const writer = Symbol();
+		this.#writer = writer;
+		const state = this.state;
+		this.state = null;
+		return {
+			state,
+			finish: (next: SessionState | null) => {
+				if (this.#writer !== writer) return;
+				this.#writer = undefined;
+				this.state = next;
+			},
+		};
+	}
 
 	// OMP aborts the agent's own turn before it closes the agent's sessions, but
 	// side requests share the agent's map and run on their callers' signals, so
 	// whatever still runs here is aborted. Nothing writes state after this.
 	close(): void {
 		this.closed = true;
+		this.#writer = undefined;
 		this.state = null;
 		if (this.id && bridgeSessions.get(this.id) === this) bridgeSessions.delete(this.id);
 		for (const query of this.queries) query.abort();
@@ -94,11 +77,6 @@ export class BridgeSession implements ProviderSessionState {
 		this.close();
 		const key = `${PROVIDER_ID}:${sessionId}`;
 		if (this.states?.get(key) === this) this.states.delete(key);
-	}
-
-	endQuery(query: QueryContext, end: QueryEnd): void {
-		this.queries.delete(query);
-		if (!this.closed) this.state = stateAfterQuery(this.state, end);
 	}
 }
 

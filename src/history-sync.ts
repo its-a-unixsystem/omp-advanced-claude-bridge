@@ -7,11 +7,8 @@
 // still changes the fingerprint. Timestamps, usage and other metadata OMP adds
 // or drops between requests are left out.
 //
-// The bridge's own final reply is the exception. OMP appends it to its history
-// after the turn, possibly normalized (tool arguments go through OMP's
-// prepareArguments), and Claude Code's session already has it. It is matched by
-// the timestamp the bridge gave it, which OMP keeps, and hashed as OMP sends it
-// from then on.
+// Claude Code already has the bridge's last reply, even though it wasn't in
+// the request. Resume only if OMP includes that same reply, unchanged.
 //
 // Extracted from index.ts so tests can import without activating the extension.
 
@@ -53,6 +50,10 @@ function messageDigest(message: HistoryMessage): string {
 	return hash.digest("hex");
 }
 
+export function replyIdentity(message: HistoryMessage & { timestamp: number }): NonNullable<SessionState["reply"]> {
+	return { timestamp: message.timestamp, digest: messageDigest(message) };
+}
+
 function chain(digests: string[], count: number): SyncedHistory {
 	const hash = createHash("sha1");
 	for (let i = 0; i < count; i++) hash.update(digests[i]);
@@ -70,9 +71,10 @@ export function planSync(state: SessionState | null, messages: readonly HistoryM
 	const priors = () => chain(digests, priorCount);
 
 	if (state && !state.needsRebuild && priorCount >= state.cursor && chain(digests, state.cursor).prefix === state.prefix) {
-		if (priorCount === state.cursor) return { path: "reuse", request, priors: priors(), adoptedReply: false };
+		if (priorCount === state.cursor && !state.reply) return { path: "reuse", request, priors: priors(), adoptedReply: false };
 		const next = messages[state.cursor];
-		if (priorCount === state.cursor + 1 && next.role === "assistant" && state.reply !== undefined && next.timestamp === state.reply) {
+		if (priorCount === state.cursor + 1 && next.role === "assistant" && state.reply
+			&& next.timestamp === state.reply.timestamp && digests[state.cursor] === state.reply.digest) {
 			return { path: "reuse", request, priors: priors(), adoptedReply: true };
 		}
 	}

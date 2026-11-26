@@ -9,12 +9,12 @@ Contributions of all sizes are welcome — bug reports, docs fixes, and features
 ```bash
 git clone https://github.com/its-a-unixsystem/omp-advanced-claude-bridge.git
 cd omp-advanced-claude-bridge
-bun install        # or: npm install
+bun install
 ```
 
 Requirements:
 - Node.js >= 20
-- [Bun](https://bun.sh) (recommended) or npm
+- [Bun](https://bun.sh) (required for the test commands)
 - [Oh My Pi](https://omp.sh/) 19.2.1 or newer in the 19.x series for end-to-end testing
 
 ## Developing against a live Oh My Pi
@@ -37,10 +37,10 @@ CLAUDE_BRIDGE_DEBUG=1 omp models advanced-claude-bridge
 ```bash
 bun run typecheck   # tsc --noEmit
 bun run test        # node unit suite, then the bun bridge suite
-bun run test:bridge # bun test tests/ (bridge integration suite against a fake SDK)
+bun run test:bridge # optional: run just the bridge suite against a fake SDK
 ```
 
-Please make sure both pass. CI runs the same two checks on every pull request.
+CI runs `typecheck` and `test` on every pull request. Please make sure both pass.
 
 ## Coding guidelines
 

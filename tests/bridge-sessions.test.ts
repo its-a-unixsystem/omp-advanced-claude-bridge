@@ -99,6 +99,28 @@ describe("main agent", () => {
 		expect(transcriptOf(claude.queries[0].sessionId)).toEqual(historyOf(history));
 		expect(claude.queries[0].isClosed).toBe(true);
 	});
+
+	test.each(["matching", "diverged"])("an overlapping turn with %s history uses a separate transcript", async (kind) => {
+		const main = agent(`overlap-${kind}`);
+		const history = await turn(main, [], "hi", "hello");
+		const older = await startTaskTurn(main, history, "toolu_overlap");
+		const olderId = claude.queries[1].sessionId;
+		const mark = sessionCalls.length;
+		const priors = kind === "matching" ? history : [user("on a different branch")];
+		const newer = await turn(main, priors, "independent question", "new reply");
+		const newerId = claude.queries[2].sessionId;
+		expect(newerId).not.toBe(olderId);
+		expect(sessionCalls.slice(mark)).not.toContainEqual({ op: "delete", sessionId: olderId });
+		expect(transcriptOf(newerId)).toEqual(historyOf(newer));
+
+		older.push(toolResult("toolu_overlap", "found it", "task"));
+		older.push(await run(main, older));
+		expect(transcriptOf(olderId)).toEqual(historyOf(older));
+
+		const continued = await turn(main, newer, "continue the newer turn", "done");
+		expect(claude.queries.at(-1)!.options.resume).toBe(newerId);
+		expect(transcriptOf(newerId)).toEqual(historyOf(continued));
+	});
 });
 
 describe("subagents", () => {
@@ -108,7 +130,7 @@ describe("subagents", () => {
 		let mainHistory = await turn(main, [], "hi", "hello");
 		const mainSession = sessionState(main).sessionId;
 		mainHistory = await startTaskTurn(main, mainHistory, "toolu_task");
-		const mainWhileWaiting = { ...sessionState(main) };
+		const mainWhileWaiting = transcriptOf(mainSession);
 
 		const mark = sessionCalls.length;
 		const childHistory = await turn(child, [user("task: look around"), assistant("Looking.")], "continue", "found it");
@@ -119,7 +141,7 @@ describe("subagents", () => {
 		expect(childQuery.options.resume).toBe(created[0].sessionId);
 		expect(sessionState(child)).toMatchObject({ sessionId: created[0].sessionId, cursor: 3 });
 		expect(transcriptOf(created[0].sessionId)).toEqual(historyOf(childHistory));
-		expect(sessionState(main)).toEqual(mainWhileWaiting);
+		expect(transcriptOf(mainSession)).toEqual(mainWhileWaiting);
 		expect([...child.states.keys()]).toEqual(["advanced-claude-bridge:child-sub"]);
 		expect([...main.states.keys()]).toEqual(["advanced-claude-bridge:child-main"]);
 
@@ -157,12 +179,12 @@ describe("side requests", () => {
 	test("a side request while the main agent waits for a tool leaves the main turn intact", async () => {
 		const main = agent("side-busy-main");
 		const mainHistory = await startTaskTurn(main, await turn(main, [], "hi", "hello"), "toolu_task");
-		const mainSession = sessionState(main).sessionId;
-		const mainBefore = { ...sessionState(main) };
+		const mainSession = claude.queries[1].sessionId;
+		const mainBefore = transcriptOf(mainSession);
 
 		const side = agent("side-busy-main:side:1", main.states);
 		await turn(side, mainHistory.slice(0, 2), "btw?", "yes");
-		expect(sessionState(main)).toEqual(mainBefore);
+		expect(transcriptOf(mainSession)).toEqual(mainBefore);
 
 		mainHistory.push(toolResult("toolu_task", "done", "task"));
 		const reply = await run(main, mainHistory);

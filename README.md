@@ -228,7 +228,7 @@ The extension reads `~/.omp/agent/advanced-claude-bridge.json` and the project's
 | `description` | — | Override the tool description shown to the model. |
 | `defaultMode` | `"read"` | `"read"`, `"none"`, or `"full"`. |
 | `defaultIsolated` | `false` | Start each call in a fresh session. |
-| `allowFullMode` | `true` | Set `false` to reject explicit `mode: "full"` calls and use `read` when the call omits `mode`. |
+| `allowFullMode` | `true` | Set `false` to reject explicit `mode: "full"` calls. A configured `"full"` default falls back to `"read"`; `"none"` and `"read"` defaults are unchanged. |
 | `appendSkills` | `true` | Forward OMP's skills block into the system prompt. |
 
 **`provider`**
