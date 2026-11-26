@@ -1,7 +1,8 @@
 # Contributing to omp-advanced-claude-bridge
 
-Thanks for your interest in improving **omp-advanced-claude-bridge**. Contributions of all
-sizes are welcome — bug reports, docs fixes, and features alike.
+Thanks for your interest in improving **omp-advanced-claude-bridge** (a fork of
+[DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)).
+Contributions of all sizes are welcome — bug reports, docs fixes, and features alike.
 
 ## Getting set up
 
@@ -36,6 +37,7 @@ CLAUDE_BRIDGE_DEBUG=1 omp models advanced-claude-bridge
 ```bash
 bun run typecheck   # tsc --noEmit
 bun run test        # node unit suite, then the bun bridge suite
+bun run test:bridge # bun test tests/ (bridge integration suite against a fake SDK)
 ```
 
 Please make sure both pass. CI runs the same two checks on every pull request.

@@ -1,16 +1,16 @@
 # omp-advanced-claude-bridge
 
 Oh My Pi (OMP) extension that runs Claude Code, through the Claude Agent SDK,
-as an OMP model provider (`claude-bridge`), plus an `AskClaude` delegation tool.
-It is an independent continuation of DevVig/omp-claude-bridge.
+as an OMP model provider (`advanced-claude-bridge`), plus an `AskClaudeAdvanced`
+delegation tool. It is an independently maintained fork of
+[DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge).
 
-## Current work
+## Architecture
 
-The `rewrite` branch rebuilds the provider's session and query core. Read
-`documentation/in-progress/2026-11-26_session-core-rewrite.md` before touching
-`src/index.ts`, `src/bridge-session.ts`, `src/query-state.ts`,
-`src/request-kind.ts` or `src/history-sync.ts`. The tag `port-baseline` is the
-behavioural reference.
+The provider's session and query core is split across `src/index.ts`,
+`src/bridge-session.ts`, `src/query-state.ts`, `src/request-kind.ts`, and
+`src/history-sync.ts`. The tag `port-baseline` is the pre-rewrite behavioural
+reference.
 
 ## Commands
 

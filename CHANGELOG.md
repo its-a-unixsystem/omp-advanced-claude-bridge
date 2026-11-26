@@ -7,8 +7,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
-- Continued as the independent project `omp-advanced-claude-bridge`
-  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>).
+- Forked from [DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)
+  as the independently maintained project `omp-advanced-claude-bridge`
+  (<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>), with
+  updated documentation, fork attribution, and banner graphic.
 - Ported the provider and AskClaude renderer to Oh My Pi 19.2.1. The bridge
   now uses OMP's bundled catalog, native streaming and tool-schema APIs, and
   reactive text nodes for AskClaude's call and result previews.
