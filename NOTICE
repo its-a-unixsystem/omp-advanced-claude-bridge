@@ -1,8 +1,8 @@
-omp-claude-bridge
-=================
+omp-advanced-claude-bridge
+==========================
 
-This project is an Oh My Pi (OMP) port of the original "pi-claude-bridge"
-extension, extended with user-selectable Claude Code context-window controls.
+This project continues "omp-claude-bridge", the Oh My Pi (OMP) port of the
+original "pi-claude-bridge" extension, as an independent project.
 
 Original work
 -------------
@@ -25,5 +25,16 @@ Derivative work
       forces the Claude Code context window across every model, hiding models
       that have no runtime for the selected window.
 
-The original MIT copyright notice is retained in the LICENSE file, as required
-by the MIT License.
+Derivative work
+---------------
+  omp-advanced-claude-bridge
+  Copyright (c) 2026 Thomas Übermeier (https://github.com/its-a-unixsystem)
+  Licensed under the MIT License.
+
+  Changes from omp-claude-bridge:
+    - Ported the provider and AskClaude to the Oh My Pi 19.2 extension API.
+    - Gave each OMP provider session its own Claude Code session, so
+      subagents and side requests no longer share the main agent's state.
+
+The original MIT copyright notices are retained in the LICENSE file, as
+required by the MIT License.

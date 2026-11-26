@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/banner.svg" alt="omp-claude-bridge — Run Claude Code natively inside Oh My Pi" width="100%" />
+<img src="assets/banner.svg" alt="omp-advanced-claude-bridge — Run Claude Code natively inside Oh My Pi" width="100%" />
 
-<h1>omp-claude-bridge</h1>
+<h1>omp-advanced-claude-bridge</h1>
 
 <p><strong>Run Claude Code as a first-class model provider inside <a href="https://omp.sh">Oh My Pi</a> — with an AskClaude delegation tool and switchable 1M / 200K context windows.</strong></p>
 
@@ -11,7 +11,7 @@
 <img alt="Oh My Pi extension" src="https://img.shields.io/badge/Oh%20My%20Pi-extension-6E56CF">
 <img alt="Claude Agent SDK" src="https://img.shields.io/badge/Claude%20Code-Agent%20SDK-D97757">
 <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
-<a href="https://github.com/DevVig/omp-claude-bridge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/DevVig/omp-claude-bridge/actions/workflows/ci.yml/badge.svg"></a>
+<a href="https://github.com/its-a-unixsystem/omp-advanced-claude-bridge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/its-a-unixsystem/omp-advanced-claude-bridge/actions/workflows/ci.yml/badge.svg"></a>
 <img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg">
 </p>
 
@@ -19,7 +19,7 @@
 
 ---
 
-`omp-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
+`omp-advanced-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
 
 Authentication and billing run through Claude Code and your Anthropic subscription via the official [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) — this extension never stores credentials.
 
@@ -58,7 +58,7 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 Requires Oh My Pi 19.2.1 or newer in the 19.x series and a working Claude Code login.
 
 ```bash
-omp plugin install git:github.com/DevVig/omp-claude-bridge
+omp plugin install git:github.com/its-a-unixsystem/omp-advanced-claude-bridge
 ```
 
 <details>
@@ -66,12 +66,12 @@ omp plugin install git:github.com/DevVig/omp-claude-bridge
 
 ```bash
 # From the full HTTPS URL
-omp plugin install https://github.com/DevVig/omp-claude-bridge
+omp plugin install https://github.com/its-a-unixsystem/omp-advanced-claude-bridge
 
 # Link a local checkout (great for hacking on it)
-git clone https://github.com/DevVig/omp-claude-bridge.git
-(cd omp-claude-bridge && bun install)
-omp plugin link ./omp-claude-bridge
+git clone https://github.com/its-a-unixsystem/omp-advanced-claude-bridge.git
+(cd omp-advanced-claude-bridge && bun install)
+omp plugin link ./omp-advanced-claude-bridge
 ```
 
 </details>
@@ -238,8 +238,8 @@ When filing a session-resume bug (e.g. "No conversation found"), the `syncResult
 ## Development
 
 ```bash
-git clone https://github.com/DevVig/omp-claude-bridge.git
-cd omp-claude-bridge
+git clone https://github.com/its-a-unixsystem/omp-advanced-claude-bridge.git
+cd omp-advanced-claude-bridge
 bun install
 
 bun run typecheck   # tsc --noEmit
@@ -252,7 +252,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. CI runs typecheck 
 
 - Original **[pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge)** by **[Eli Dickinson](https://github.com/elidickinson)** — the streaming provider, MCP/tool bridging, session resume, and AskClaude tool this project builds on.
 - Initial inspiration from [claude-agent-sdk-pi](https://github.com/prateekmedia/claude-agent-sdk-pi) by Prateek Sunal.
-- **Oh My Pi port and context-window controls** by **[Jonathan Borgwing](https://github.com/DevVig)**.
+- **Oh My Pi port and context-window controls** ([omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)) by **[Jonathan Borgwing](https://github.com/DevVig)**.
+- **omp-advanced-claude-bridge**, an independent continuation, by **[Thomas Übermeier](https://github.com/its-a-unixsystem)**.
 
 See [NOTICE](NOTICE) for full attribution.
 
@@ -260,4 +261,4 @@ See [NOTICE](NOTICE) for full attribution.
 
 ## License
 
-[MIT](LICENSE) © 2026 Eli Dickinson (original) and Jonathan Borgwing (Oh My Pi port and context-window controls).
+[MIT](LICENSE) © 2026 Eli Dickinson (original), Jonathan Borgwing (Oh My Pi port and context-window controls) and Thomas Übermeier (omp-advanced-claude-bridge).

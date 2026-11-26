@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="omp-claude-bridge — Run Claude Code natively inside Oh My Pi">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="omp-advanced-claude-bridge — Run Claude Code natively inside Oh My Pi">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0b1020"/>
@@ -52,7 +52,7 @@
   </g>
 
   <!-- wordmark -->
-  <text x="640" y="150" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, 'Cascadia Code', monospace" font-size="72" font-weight="700" letter-spacing="1" fill="#f8fafc">omp-claude-bridge</text>
+  <text x="640" y="150" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, 'Cascadia Code', monospace" font-size="64" font-weight="700" letter-spacing="1" fill="#f8fafc">omp-advanced-claude-bridge</text>
 
   <!-- tagline -->
   <text x="640" y="196" text-anchor="middle" font-family="system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="23" fill="#22d3ee">Run Claude Code natively inside Oh My Pi</text>

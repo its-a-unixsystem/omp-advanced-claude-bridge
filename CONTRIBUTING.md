@@ -1,13 +1,13 @@
-# Contributing to omp-claude-bridge
+# Contributing to omp-advanced-claude-bridge
 
-Thanks for your interest in improving **omp-claude-bridge**. Contributions of all
+Thanks for your interest in improving **omp-advanced-claude-bridge**. Contributions of all
 sizes are welcome — bug reports, docs fixes, and features alike.
 
 ## Getting set up
 
 ```bash
-git clone https://github.com/DevVig/omp-claude-bridge.git
-cd omp-claude-bridge
+git clone https://github.com/its-a-unixsystem/omp-advanced-claude-bridge.git
+cd omp-advanced-claude-bridge
 bun install        # or: npm install
 ```
 
@@ -21,7 +21,7 @@ Requirements:
 Point Oh My Pi at your working copy so changes load on the next run:
 
 ```bash
-omp plugin link ./omp-claude-bridge  # Run from the parent directory.
+omp plugin link ./omp-advanced-claude-bridge  # Run from the parent directory.
 ```
 
 Enable debug logging while iterating:

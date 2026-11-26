@@ -7,8 +7,8 @@ This project follows a rolling release model. Security fixes land on the latest
 
 | Version | Supported |
 | ------- | --------- |
-| 0.7.x   | Yes       |
-| < 0.7   | No        |
+| 0.8.x   | Yes       |
+| < 0.8   | No        |
 
 ## Reporting a vulnerability
 
@@ -16,8 +16,7 @@ Please **do not** open a public issue for security reports.
 
 Instead, use GitHub's private vulnerability reporting:
 **Security → Report a vulnerability** on
-<https://github.com/DevVig/omp-claude-bridge>, or email the maintainer at
-`jon@learnvig.com`.
+<https://github.com/its-a-unixsystem/omp-advanced-claude-bridge>.
 
 Include:
 - A description of the issue and its impact.

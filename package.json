@@ -1,5 +1,5 @@
 {
-	"name": "omp-claude-bridge",
+	"name": "omp-advanced-claude-bridge",
 	"version": "0.8.1",
 	"private": false,
 	"description": "Oh My Pi extension that runs Claude Code (via the Claude Agent SDK) as a model provider, adds an AskClaude delegation tool, and lets you force the 1M / 200K context window per provider.",
@@ -12,18 +12,19 @@
 		"context-window",
 		"1m-context"
 	],
-	"author": "Jonathan Borgwing (https://github.com/DevVig)",
+	"author": "Thomas Übermeier (https://github.com/its-a-unixsystem)",
 	"contributors": [
-		"Eli Dickinson (original pi-claude-bridge author, https://github.com/elidickinson)"
+		"Eli Dickinson (original pi-claude-bridge author, https://github.com/elidickinson)",
+		"Jonathan Borgwing (omp-claude-bridge, the Oh My Pi port, https://github.com/DevVig)"
 	],
 	"license": "MIT",
-	"homepage": "https://github.com/DevVig/omp-claude-bridge#readme",
+	"homepage": "https://github.com/its-a-unixsystem/omp-advanced-claude-bridge#readme",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/DevVig/omp-claude-bridge.git"
+		"url": "git+https://github.com/its-a-unixsystem/omp-advanced-claude-bridge.git"
 	},
 	"bugs": {
-		"url": "https://github.com/DevVig/omp-claude-bridge/issues"
+		"url": "https://github.com/its-a-unixsystem/omp-advanced-claude-bridge/issues"
 	},
 	"engines": {
 		"node": ">=20"
