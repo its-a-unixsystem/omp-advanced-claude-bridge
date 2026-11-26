@@ -6,6 +6,12 @@ import type { Message as SessionMessage } from "cc-session-io";
 
 export const PROVIDER_ID = "advanced-claude-bridge";
 
+/** Roles Claude Code receives as a user turn. OMP sends `developer` messages
+ *  (reminders, synthetic continues) as user turns on its own Anthropic provider too. */
+export function isPromptRole(role: string): boolean {
+	return role === "user" || role === "developer";
+}
+
 export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",
 };
@@ -66,7 +72,14 @@ export function convertPiMessages(
 	const sanitizedIds = new Map();
 
 	for (const msg of messages) {
-		if (msg.role === "user") {
+		if (isPromptRole(msg.role)) {
+			// Skip empty developer messages — they carry nothing Claude Code can replay.
+			if (msg.role !== "user") {
+				const text = typeof msg.content === "string"
+					? msg.content
+					: messageContentToText(msg.content as Array<{ type: string; text?: string; data?: string; mimeType?: string }>);
+				if (!text.trim()) continue;
+			}
 			if (typeof msg.content === "string") {
 				anthropicMessages.push({ role: "user", content: msg.content || "[empty]" });
 			} else if (Array.isArray(msg.content)) {

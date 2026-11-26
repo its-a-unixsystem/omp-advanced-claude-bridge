@@ -9,6 +9,7 @@
 import type { AssistantMessage, AssistantMessageEventStream, Model } from "@oh-my-pi/pi-ai";
 import type { McpResult } from "./extract-tool-results.js";
 import type { SyncedHistory } from "./history-sync.js";
+import type { RateLimitRejection } from "./rate-limit.js";
 
 export interface PendingToolCall {
 	toolName: string;
@@ -40,6 +41,7 @@ export class QueryContext {
 	turnStarted = false;
 	turnSawStreamEvent = false;
 	turnSawToolCall = false;
+	lastRateLimitRejection: RateLimitRejection | null = null;
 
 	get turnBlocks(): Array<any> {
 		if (!this.turnOutput) throw new Error("turnBlocks accessed before resetTurnState");
@@ -81,6 +83,7 @@ export class QueryContext {
 		this.turnStarted = false;
 		this.turnSawStreamEvent = false;
 		this.turnSawToolCall = false;
+		this.lastRateLimitRejection = null;
 		// turnToolCallIds and nextHandlerIdx are NOT reset — they persist across
 		// tool-result delivery callbacks within the same assistant message.
 	}

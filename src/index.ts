@@ -2,15 +2,15 @@ import { createAssistantMessageEventStream, toolWireSchema, type AssistantMessag
 import { getBundledModelSlice } from "@oh-my-pi/pi-catalog/models";
 import { buildSessionContext, formatKeyHint, getKeybindings, type CompactionEntry, type ExtensionAPI, type ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
 import { compact } from "@oh-my-pi/pi-agent-core/compaction";
-import { createSdkMcpServer, query, type EffortLevel, type Options, type Query, type SDKMessage, type SDKResultMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { createSdkMcpServer, query, type Options, type Query, type SDKMessage, type SDKResultMessage, type SDKUserMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam, MessageParam } from "@anthropic-ai/sdk/resources";
 import { jsx } from "@oh-my-pi/pi-tui";
 import { createSession, deleteSession, repairToolPairing } from "cc-session-io";
 import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
-import { buildVariantModels, buildModels, claudeCodeModelId, type ContextWindowMode, type LongContextSettings, resolveModel as _resolveModel } from "./models.js";
+import { PROVIDER_ID, isPromptRole, messageContentToText, convertPiMessages } from "./convert.js";
+import { buildVariantModels, buildModels, claudeCodeEffort, claudeCodeModelId, type ContextWindowMode, type LongContextSettings, resolveModel as _resolveModel } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, extractSkillsBlock } from "./skills.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import type { McpResult } from "./extract-tool-results.js";
@@ -22,7 +22,17 @@ import { loadConfig, type Config } from "./config.js";
 import { extractAgentsAppend } from "./agents-md.js";
 import { jsonSchemaToZodShape } from "./typebox-to-zod.js";
 import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
-import { rateLimitNotice } from "./rate-limit.js";
+import { describeRateLimitFailure, isSessionLimitNotice, rateLimitNotice } from "./rate-limit.js";
+
+// Shared env guards for every Claude Code subprocess:
+// - ENABLE_CLAUDEAI_MCP_SERVERS=0: keep claude.ai cloud MCP servers out of OMP sessions.
+// - DISABLE_AUTO_COMPACT=1: OMP owns compaction and history truth.
+// - CLAUDE_CODE_ELEGANT_MEADOW=0: disable CC 2.1.308+ per-request API logs in session files.
+const CC_CHILD_ENV = {
+	ENABLE_CLAUDEAI_MCP_SERVERS: "0",
+	DISABLE_AUTO_COMPACT: "1",
+	CLAUDE_CODE_ELEGANT_MEADOW: "0",
+} as const;
 
 function calculateCost(model: Model<any>, usage: Usage): Usage["cost"] {
 	usage.cost.input = (model.cost.input / 1_000_000) * usage.input;
@@ -197,19 +207,19 @@ function debugToolResults(context: Context, results: McpResult[]): void {
 	}
 }
 
-/** Extract the last user message from context as a prompt string. Returns null if last message is not a user message. */
+/** Extract the last user/developer message from context as a prompt string. */
 function extractUserPrompt(messages: Context["messages"]): string | null {
 	const last = messages[messages.length - 1];
-	if (!last || last.role !== "user") return null;
+	if (!last || !isPromptRole(last.role)) return null;
 	if (typeof last.content === "string") return last.content;
 	return messageContentToText(last.content) || "";
 }
 
-/** Extract the last user message as ContentBlockParam[] (preserving images).
+/** Extract the last user/developer message as ContentBlockParam[] (preserving images).
  *  Returns null if no images — caller should fall back to string prompt. */
 function extractUserPromptBlocks(messages: Context["messages"]): ContentBlockParam[] | null {
 	const last = messages[messages.length - 1];
-	if (!last || last.role !== "user") return null;
+	if (!last || !isPromptRole(last.role)) return null;
 	if (typeof last.content === "string") {
 		debug(`extractUserPromptBlocks: content is string (length=${last.content.length})`);
 		return null;
@@ -318,20 +328,23 @@ async function runIsolatedSummary(
 		const cwd = options?.cwd ?? process.cwd();
 		const claudeExecutable = loadConfig(cwd).provider?.pathToClaudeCodeExecutable;
 		const cliModel = claudeCodeModelId(model, longContextSettings);
-		debug(`compact summary: spawn model=${cliModel} registeredModel=${model.id} promptLen=${promptText.length}`);
+		const effort = !options?.disableReasoning && options?.reasoning
+			? claudeCodeEffort(model, options.reasoning)
+			: undefined;
+		debug(`compact summary: spawn model=${cliModel} registeredModel=${model.id} effort=${effort ?? "default"} promptLen=${promptText.length}`);
 
 		sdkQuery = query({
 			prompt: promptText,
 			options: {
 				cwd,
-				env: { ...process.env, DISABLE_AUTO_COMPACT: "1", CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
+				env: { ...process.env, ...CC_CHILD_ENV, CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" },
 				tools: [],
 				strictMcpConfig: true,
 				settingSources: [] as SettingSource[],
 				skills: [],
 				persistSession: false,
 				systemPrompt: systemPromptText(context.systemPrompt),
-				...(options?.disableReasoning ? { thinking: { type: "disabled" } } : {}),
+				...(options?.disableReasoning ? { thinking: { type: "disabled" } } : effort ? { effort } : {}),
 				model: cliModel,
 				maxTurns: 1,
 				...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
@@ -531,6 +544,15 @@ function syncSession(
 		...(modelId ? { model: modelId } : {}),
 	});
 	convertAndImportMessages(created, priorMessages, customToolNameToSdk);
+	// When no prior messages survive conversion (e.g. only empty or unreplayable
+	// synthetic messages), save() writes no file and resuming that id fails with
+	// "No conversation found with session ID". Start clean instead.
+	if (created.messages.length === 0) {
+		debug(`rebuild produced 0 records from ${priorMessages.length} prior message(s); starting clean`);
+		debug(`syncResult: path=clean-start empty-rebuild`);
+		session.state = null;
+		return { resumeSessionId: null, request: plan.request };
+	}
 	created.save();
 	verifyWrittenSession(created.jsonlPath, created.sessionId, created.messages.length, cwd);
 	session.state = { sessionId: created.sessionId, cwd, ...plan.priors };
@@ -685,13 +707,6 @@ function logServedContextWindow(label: string, message: SDKMessage, model: Model
 		debug(`${label}: served contextWindow=${v.contextWindow ?? "?"} maxOutputTokens=${v.maxOutputTokens ?? "?"} servedModel=${k} registered=${model.contextWindow}`);
 	}
 }
-
-// --- Effort level mapping ---
-// OMP reasoning levels → CC SDK effort levels
-
-const REASONING_TO_EFFORT: Record<string, EffortLevel> = {
-	minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "max", max: "max",
-};
 
 // --- Provider helpers: misc ---
 
@@ -880,9 +895,25 @@ function processStreamEvent(
 // the same stream lifecycle as processStreamEvent — including ending the stream on
 // tool_use to prevent deadlock with the MCP handler.
 function processAssistantMessage(message: SDKMessage, model: Model<any>, customToolNameToPi: Map<string, string>, c: QueryContext): void {
-	if (c.turnSawStreamEvent) return;
 	const assistantMsg = (message as any).message;
 	if (!assistantMsg?.content) return;
+	for (const block of assistantMsg.content) {
+		if (block.type === "text" && typeof block.text === "string" && isSessionLimitNotice(block.text)) {
+			throw new Error(describeRateLimitFailure(c.lastRateLimitRejection ?? {}, block.text.trim()));
+		}
+	}
+	// Claude Code reports API failures and quota/context notices as `<synthetic>`
+	// assistant messages. Keep their text off the stream so pre-output fallback
+	// chains can still switch providers when the error result arrives.
+	if (assistantMsg.model === "<synthetic>") {
+		debug(`processAssistantMessage: <synthetic> message, keeping ${assistantMsg.content.length} block(s) off the stream`);
+		for (const block of assistantMsg.content) {
+			if (block.type === "text" && block.text) c.turnBlocks.push({ type: "text", text: block.text });
+		}
+		if (assistantMsg.usage && c.turnOutput) updateUsage(c.turnOutput, assistantMsg.usage, model);
+		return;
+	}
+	if (c.turnSawStreamEvent) return;
 	if (assistantMsg.id && c.streamedMessageIds.has(assistantMsg.id)) {
 		debug(`processAssistantMessage: skipping ${assistantMsg.id}, already streamed`);
 		return;
@@ -951,7 +982,10 @@ async function consumeQuery(
 	for await (const message of sdkQuery) {
 		if (queryCtx.aborted) break;
 		if (message.type === "result" && (message.subtype !== "success" || message.is_error)) {
-			throw new Error(resultErrorText(message));
+			const failure = resultErrorText(message);
+			throw new Error(queryCtx.lastRateLimitRejection
+				? describeRateLimitFailure(queryCtx.lastRateLimitRejection, failure)
+				: failure);
 		}
 		if (!queryCtx.currentPiStream || !queryCtx.turnOutput) continue;
 
@@ -984,6 +1018,12 @@ async function consumeQuery(
 			case "rate_limit_event": {
 				const info = (message as any).rate_limit_info;
 				debug("consumeQuery: rate_limit_event", JSON.stringify(info).slice(0, 300));
+				if (info?.status === "rejected") {
+					queryCtx.lastRateLimitRejection = {
+						rateLimitType: info.rateLimitType,
+						resetsAt: typeof info.resetsAt === "number" ? info.resetsAt : undefined,
+					};
+				}
 				const notice = rateLimitNotice(info);
 				if (notice) piUI?.notify(notice.message, notice.level);
 				break;
@@ -1178,10 +1218,7 @@ function buildProviderQueryOptions(
 	const claudeExecutable = providerSettings.pathToClaudeCodeExecutable;
 
 	const reasoning = options?.disableReasoning ? undefined : options?.reasoning;
-	const mappedEffort = reasoning && model.thinking?.effortMap?.[reasoning];
-	const effort = mappedEffort === "xhigh"
-		? mappedEffort
-		: reasoning && (REASONING_TO_EFFORT[mappedEffort ?? reasoning] ?? REASONING_TO_EFFORT[reasoning]);
+	const effort = reasoning ? claudeCodeEffort(model, reasoning) : undefined;
 
 	// cliModel is the actual id sent to Claude Code (may carry [1m]); model.id is the
 	// pi-registered id. Log cliModel so debug lines reflect what CC actually received.
@@ -1192,17 +1229,7 @@ function buildProviderQueryOptions(
 	// Force summarized so thinking_delta events arrive. See anthropics/claude-agent-sdk-python#830.
 	if (effort) extraArgs["thinking-display"] = "summarized";
 
-	// Suppress claude.ai cloud MCP servers (Figma/Canva/etc. auto-discovered via OAuth
-	// when the user is logged into Anthropic). These are a separate code path from
-	// filesystem MCP and are NOT blocked by --strict-mcp-config or settingSources=undefined.
-	// The native CC binary gates them on env var ENABLE_CLAUDEAI_MCP_SERVERS: setting it
-	// to "0"/"false"/"no"/"off" makes the loader return early before any cloud fetch.
-	// DISABLE_AUTO_COMPACT=1: pi owns context-management and propagates its own
-	// /compact (the next turn's sync sees the compacted history). Letting CC
-	// also autocompact would double-flush the prompt cache and races pi's
-	// threshold with CC's, including CC's anti-thrashing guard (issue #8).
-	// Manual /compact in CC still works (we never invoke it).
-	const childEnv = { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" };
+	const childEnv = { ...process.env, ...CC_CHILD_ENV };
 	const queryOptions: ProviderQueryOptions = {
 		cwd,
 		env: childEnv,
@@ -1376,8 +1403,7 @@ async function promptAndWait(
 		? extractSkillsBlock(options.systemPrompt) : undefined;
 
 	// Effort
-	const effort = options?.thinking && options.thinking !== "off"
-		? REASONING_TO_EFFORT[options.thinking] : undefined;
+	const effort = options?.thinking ? claudeCodeEffort(model ?? {}, options.thinking) : undefined;
 
 	const claudeExecutable = providerSettings.pathToClaudeCodeExecutable;
 
@@ -1396,7 +1422,7 @@ async function promptAndWait(
 		prompt,
 		options: {
 			cwd,
-			env: { ...process.env, ENABLE_CLAUDEAI_MCP_SERVERS: "0", DISABLE_AUTO_COMPACT: "1" },
+			env: { ...process.env, ...CC_CHILD_ENV },
 			permissionMode: "bypassPermissions",
 			...(disallowedTools.length ? { disallowedTools } : {}),
 			...(effort ? { effort } : {}),
@@ -1607,7 +1633,7 @@ export default function (pi: ExtensionAPI) {
 			prompt: z.string().describe("The question or task for Claude Code. By default Claude sees the full conversation history. Don't research up front, let Claude explore."),
 			mode: z.enum(modeValues).describe(modeDesc).optional(),
 			model: z.string().describe('Claude model (e.g. "opus", "sonnet", "haiku", or full ID). Defaults to "opus".').optional(),
-			thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh"]).describe("Thinking effort level. Omit to use Claude Code's default.").optional(),
+			thinking: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]).describe("Thinking effort level. Omit to use Claude Code's default.").optional(),
 			isolated: z.boolean().describe("When true, Claude sees only this prompt (clean session). When false (default), Claude sees the full conversation history.").optional(),
 		});
 		pi.registerTool({

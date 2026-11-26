@@ -7,6 +7,7 @@
 // Extracted from index.ts so tests can import without activating the extension.
 
 import type { Message } from "@oh-my-pi/pi-ai";
+import { isPromptRole } from "./convert.js";
 import { extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 
 export interface ToolCallOwner {
@@ -35,7 +36,7 @@ export function classifyRequest<Q extends ToolCallOwner>(
 		const ids = results.map((r) => r.toolCallId).filter((id): id is string => Boolean(id));
 		for (const query of session.queries) {
 			if (ids.some((id) => query.ownsToolCall(id))) {
-				return { kind: "tool-results", query, results, steer: lastRole === "user" };
+				return { kind: "tool-results", query, results, steer: lastRole !== undefined && isPromptRole(lastRole) };
 			}
 		}
 	}

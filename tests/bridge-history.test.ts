@@ -156,3 +156,40 @@ test("compaction in one session leaves other sessions' Claude Code sessions alon
 	expect(claude.queries.at(-1)!.options.resume).toBe(childSession);
 	expect(createdSince(mark)).toEqual([]);
 });
+
+test("an empty rebuild starts clean instead of resuming an unwritten session", async () => {
+	const main = agent("empty-rebuild");
+	claude.next(async function* (cc) { yield* cc.reply("hello"); });
+	const reply = await run(main, [{ role: "developer", content: "   ", timestamp: 1 } as any, user("first turn")]);
+	expect(text(reply)).toBe("hello");
+	expect(claude.queries[0].options.resume).toBeUndefined();
+	expect(sessionCalls).toEqual([]);
+});
+
+test("non-empty developer messages are forwarded in prompts and rebuilt history", async () => {
+	const main = agent("developer-msg");
+	claude.next(async function* (cc) { yield* cc.reply("acknowledged"); });
+	const reply = await run(main, [
+		{ role: "developer", content: "<system-reminder>project rule</system-reminder>", timestamp: 1 } as any,
+		{ role: "developer", content: "continue now", timestamp: 2 } as any,
+	]);
+	expect(text(reply)).toBe("acknowledged");
+	expect(claude.queries[0].prompt).toBe("continue now");
+	expect(transcriptOf(claude.queries[0].options.resume)).toEqual(["user: <system-reminder>project rule</system-reminder>", "user: continue now", "assistant: acknowledged"]);
+});
+
+test("session-limit notices fail as quota/rate-limit errors instead of streaming as assistant text", async () => {
+	const main = agent("session-limit");
+	claude.next(async function* (cc) {
+		yield { type: "system", subtype: "init", session_id: cc.sessionId };
+		yield {
+			type: "assistant",
+			message: { id: "msg_limit", model: "<synthetic>", content: [{ type: "text", text: "You've hit your session limit · resets 5pm" }] },
+		};
+		yield { type: "result", subtype: "success", is_error: false, result: "" };
+	});
+	const reply = await run(main, [user("hello")]);
+	expect(reply.stopReason).toBe("error");
+	expect(reply.errorMessage).toContain("Claude quota exceeded — rate limit");
+	expect(text(reply)).toBe("");
+});
