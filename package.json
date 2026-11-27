@@ -1,6 +1,6 @@
 {
 	"name": "omp-advanced-claude-bridge",
-	"version": "0.8.1",
+	"version": "1.0.0",
 	"private": false,
 	"description": "Fork of omp-claude-bridge: Oh My Pi 19.2+ extension that runs Claude Code (via the Claude Agent SDK) as an isolated per-session model provider, adds the AskClaude delegation tool, and exposes switchable 1M / 200K context windows.",
 	"keywords": [
