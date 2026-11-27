@@ -23,16 +23,26 @@
 > [!NOTE]
 > **Fork notice:** `omp-advanced-claude-bridge` is an independently maintained **fork of [DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)** (which itself ported [elidickinson/pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge) to Oh My Pi).
 >
-> Compared to upstream `omp-claude-bridge`, this fork adds **Oh My Pi 19.2+ support**, a **rewritten per-session core** (so subagents and `/btw` side requests never clobber the main agent's Claude Code session), and **hardened SDK error and history handling**, while keeping the original `claude-bridge` provider, `AskClaude` tool, and `claude-bridge.json` config names as a drop-in replacement.
+> Compared to `omp-claude-bridge`, this fork adds:
+>
+> - **Oh My Pi 19.2+ support** — uses OMP's bundled Anthropic catalog (so new Claude models appear automatically), native streaming/tool-schema APIs, and reactive TUI previews.
+> - **Rewritten per-session core** — each OMP provider session owns its own Claude Code session, history sync, and deferred steer replay, so in-process subagents and `/btw` side requests never clobber the main agent.
+> - **Session-limit / quota protection** — sets `CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge` on all spawned Claude Code subprocesses instead of the Agent SDK default (`sdk-ts`), avoiding Anthropic's inflated 5-hour session-limit burn rate ([anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074)).
+> - **Persistent session resume & verified history sync** — saves native Claude Code resume mappings for file-backed primary OMP sessions, verifies transcript prefixes before copying on rewind/fork, and preserves signed thinking from OMP's native Anthropic provider.
+> - **Full OMP system prompt & memory controls** — forwards the full rendered OMP system prompt by default (`systemPromptPreset`), uses Claude Code's default output style, and disables auto-memory unless opted in.
+> - **Rate-limit metadata reporting** — surfaces Claude Code rate-limit events through OMP's `after_provider_response` hook as `anthropic-ratelimit-unified-*` headers.
+> - **Hardened SDK error and request handling** — surfaces SDK failures instead of empty successes, enforces `allowFullMode: false`, and isolates AskClaude / helper calls from the primary session.
+>
+> It keeps the original `claude-bridge` provider, `AskClaude` tool, and `claude-bridge.json` config names as a drop-in replacement.
 
-`omp-advanced-claude-bridge` lets you drive **Claude Code** — Opus, Sonnet, Haiku, and Fable — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
+`omp-advanced-claude-bridge` lets you use **Claude Code** — Opus, Sonnet, Haiku, Fable, and Mythos — from inside Oh My Pi, with every tool call flowing through OMP's native TUI. It also exposes an **AskClaude** tool so any other provider can delegate a task or a second opinion to Claude Code, and it gives you **direct control over the context window** each model requests.
 
 Authentication and billing run through Claude Code and your Anthropic subscription via the official [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript) — this extension never stores credentials.
 
 <div align="center">
 <a href="assets/claude-bridge1.png"><img src="assets/claude-bridge1.png" width="49%"></a>&nbsp;
 <a href="assets/claude-bridge2.png"><img src="assets/claude-bridge2.png" width="49%"></a>
-<p><sub><em>Screenshots from the upstream <code>pi-claude-bridge</code> demo illustrating native TUI tool bridging and AskClaude delegation.</em></sub></p>
+<p><sub><em>Screenshots illustrating native Oh My Pi TUI tool bridging and AskClaude delegation.</em></sub></p>
 </div>
 
 ## Table of contents
@@ -41,7 +51,6 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 - [Install](#install)
 - [Quickstart](#quickstart)
 - [Context window controls](#context-window-controls)
-- [Models](#models)
 - [AskClaude tool](#askclaude-tool)
 - [Configuration reference](#configuration-reference)
 - [How it works](#how-it-works)
@@ -52,15 +61,15 @@ Authentication and billing run through Claude Code and your Anthropic subscripti
 
 ## Features
 
-- **Claude Code as a provider** — pick Opus / Sonnet / Haiku / Fable from `/model` under `claude-bridge/*`; tool calls render in OMP's TUI like any native provider.
+- **Claude Code as a provider** — pick Opus / Sonnet / Haiku / Fable / Mythos from `/model` under `claude-bridge/*`; tool calls render in OMP's TUI like any native provider.
 - **Isolated per-session core** — each OMP provider session owns its own Claude Code transcript, history sync, and deferred steer replay, so in-process subagents and `/btw` side requests never collide with the main agent.
 - **Oh My Pi 19.2+ native integration** — built against OMP's bundled Anthropic catalog, native streaming/tool-schema APIs, and reactive TUI previews.
 - **AskClaude delegation tool** — from any other provider, hand a task or question to Claude Code (read-only, no-tools, or full read/write/bash), optionally in an isolated session.
 - **Switchable context window** — pick **1M** or **200K** directly in `/model`, or set a global default (`auto`, `1m`, `200k`) built on upstream `omp-claude-bridge`'s measured per-model policies.
-- **Session resume & history sync.** File-backed primary OMP sessions can resume their native Claude Code transcript after a restart and keep unchanged history on rewinds. History imports preserve signed thinking from OMP's native Anthropic provider.
-- **Full OMP system prompt.** Claude Code gets OMP's skills, AGENTS.md, and instructions from OMP extensions or the command line.
+- **Session resume & history sync** — file-backed primary OMP sessions can resume their native Claude Code transcript after a restart and keep unchanged history on rewinds. History imports preserve signed thinking from OMP's native Anthropic provider.
+- **Full OMP system prompt** — Claude Code gets OMP's skills, `AGENTS.md`, and instructions from OMP extensions or the command line.
 - **Thinking support** — effort levels map through to Claude Code, including `xhigh` on Sonnet models.
-- **MCP tool bridging** with strict-config isolation by default.
+- **MCP tool bridging** — strict-config isolation by default.
 
 ## Install
 
@@ -124,45 +133,37 @@ Both windows stay in the picker regardless of this setting (wherever a runtime e
 
 ### Windows offered per model
 
+Models are loaded dynamically from Oh My Pi's bundled Anthropic catalog (newest generation first per family, excluding dated snapshot aliases). With OMP 19.2.1's bundled catalog, the registered models and context windows are:
+
 | Model | 200K entry | 1M entry | `auto` default |
 | ----- | :--------: | :------: | :------------: |
+| `claude-fable-5-2` | ✓ | ✓ | 200K |
+| `claude-fable-5-1` | ✓ | ✓ | 200K |
+| `claude-fable-5` | ✓ | ✓ | 200K |
+| `claude-mythos-5-2` | ✓ | ✓ | 200K |
+| `claude-mythos-5-1` | ✓ | ✓ | 200K |
+| `claude-mythos-5` | ✓ | ✓ | 200K |
+| `claude-opus-5-5` | ✓ | ✓ | 1M |
+| `claude-opus-5` | ✓ | ✓ | 1M |
 | `claude-opus-4-8` | ✓ | ✓ | 1M |
 | `claude-opus-4-7` | — | ✓ | 1M |
 | `claude-opus-4-6` | ✓ | ✓ | 200K¹ |
-| `claude-fable-5` | ✓ | ✓ | 200K |
+| `claude-opus-4-5` | ✓ | — | 200K |
+| `claude-sonnet-5-5` | ✓ | ✓ | 1M |
 | `claude-sonnet-5` | ✓ | ✓ | 1M |
 | `claude-sonnet-4-6` | ✓ | ✓ | 200K² |
+| `claude-sonnet-4-5` | ✓ | — | 200K |
+| `claude-haiku-5-5` | ✓ | ✓ | 1M |
 | `claude-haiku-4-5` | ✓ | — | 200K |
 
-¹ Opus 4.6's `auto` default is 1M when `plan: "max"` or `longContextExtraUsage: true`.
-² Sonnet 4.6's `auto` default is 1M when `longContextExtraUsage: true`.
+- ¹ Opus 4.6's `auto` default is 1M when `plan: "max"` or `longContextExtraUsage: true`.
+- ² Sonnet 4.6's `auto` default is 1M when `longContextExtraUsage: true`.
 
 The suffixed alternate exists only for the window that isn't the default — e.g. under `auto` you get `claude-opus-4-8` (1M) + `claude-opus-4-8-200k`, and under `"200k"` you get `claude-opus-4-8` (200K) + `claude-opus-4-8-1m`.
 
 > Forcing 1M is a *request*: some models may still be **served** 200K by your subscription entitlement. Set `CLAUDE_BRIDGE_DEBUG=1` to log the served window (see [Debugging](#debugging)).
 
 > An invalid `contextWindow` value logs a warning and falls back to `"auto"`, so a typo never breaks startup.
-
-## Models
-
-Pick any of these from `/model` — each entry shows a `(1M)` or `(200K)` label. The exact ids below assume the default `contextWindow: "auto"`; which id is unsuffixed vs `-1m` / `-200k` follows your configured [default window](#default-window).
-
-| Picker id (auto) | Window |
-| --------- | ------ |
-| `claude-bridge/claude-fable-5` | 200K |
-| `claude-bridge/claude-fable-5-1m` | 1M |
-| `claude-bridge/claude-opus-4-8` | 1M |
-| `claude-bridge/claude-opus-4-8-200k` | 200K |
-| `claude-bridge/claude-opus-4-7` | 1M |
-| `claude-bridge/claude-opus-4-6` | 200K (1M on Max / Extra Usage) |
-| `claude-bridge/claude-opus-4-6-1m` | 1M |
-| `claude-bridge/claude-sonnet-5` | 1M (supports `xhigh`) |
-| `claude-bridge/claude-sonnet-5-200k` | 200K |
-| `claude-bridge/claude-sonnet-4-6` | 200K (supports `xhigh`) |
-| `claude-bridge/claude-sonnet-4-6-1m` | 1M |
-| `claude-bridge/claude-haiku-4-5` | 200K (cheapest) |
-
-Bash commands issued by Claude Code get a 120-second default timeout (matching Claude Code's default), since OMP's bash has no timeout by default.
 
 ## AskClaude tool
 
@@ -285,7 +286,6 @@ This project is a **fork** with the following lineage:
 
 - **Original project:** **[pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge)** by **[Eli Dickinson](https://github.com/elidickinson)** — the streaming provider, MCP/tool bridging, session resume, and AskClaude tool this project builds on (with initial inspiration from [claude-agent-sdk-pi](https://github.com/prateekmedia/claude-agent-sdk-pi) by Prateek Sunal).
 - **Upstream Oh My Pi port:** **[omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge)** by **[Jonathan Borgwing](https://github.com/DevVig)** — the Oh My Pi port and switchable context-window controls that this repository was forked from.
-- **This fork:** **omp-advanced-claude-bridge** by **[Thomas Übermeier](https://github.com/its-a-unixsystem)** — Oh My Pi 19.2+ port, rewritten per-session core, and hardened SDK/history handling.
 
 See [NOTICE](NOTICE) for full attribution.
 
