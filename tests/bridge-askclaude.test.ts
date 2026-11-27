@@ -34,15 +34,12 @@ function ask(params: Record<string, unknown>, ctx: unknown, signal?: AbortSignal
 	return askClaudeTool().execute("call-1", params, signal, undefined, ctx);
 }
 
-test("the fork reads only its own project configuration", () => {
+test("loadConfig reads project configuration from claude-bridge.json", () => {
 	const project = mkdtempSync(join(cwd, "config-"));
 	try {
 		const configDir = join(project, ".omp");
 		mkdirSync(configDir);
-		writeFileSync(join(configDir, "claude-bridge.json"), '{"askClaude":{"enabled":false}}');
-		expect(loadConfig(project).askClaude?.enabled).toBeUndefined();
-
-		writeFileSync(join(configDir, "advanced-claude-bridge.json"), '{"askClaude":{"name":"DelegateToClaude"}}');
+		writeFileSync(join(configDir, "claude-bridge.json"), '{"askClaude":{"name":"DelegateToClaude"}}');
 		expect(loadConfig(project).askClaude).toEqual({ name: "DelegateToClaude" });
 	} finally {
 		rmSync(project, { recursive: true, force: true });
@@ -69,12 +66,11 @@ test("shared mode imports the conversation and resumes it", async () => {
 	expect(query.options.settings).toEqual({ autoMemoryEnabled: false, outputStyle: "default" });
 });
 
-test("isolated mode works from the upstream provider and persists nothing", async () => {
+test("isolated mode starts a clean session and persists nothing", async () => {
 	claude.next(async function* (cc) { yield* cc.reply("Fresh answer."); });
-	const upstreamModel = { ...extensionContext().model, provider: "claude-bridge", api: "claude-bridge" };
 	const result = await ask(
 		{ prompt: "fresh look", isolated: true },
-		toolContext("ask-isolated", [user("earlier"), assistant("context")], upstreamModel),
+		toolContext("ask-isolated", [user("earlier"), assistant("context")]),
 	);
 
 	expect(result.content[0].text).toBe("Fresh answer.");
@@ -84,11 +80,11 @@ test("isolated mode works from the upstream provider and persists nothing", asyn
 	expect(createdSince(0)).toEqual([]);
 });
 
-test("AskClaudeAdvanced refuses to run while its own provider is active", async () => {
+test("AskClaude refuses to run while its own provider is active", async () => {
 	const ctx = toolContext("ask-circular", [user("hi")], extensionContext().model);
 	const result = await ask({ prompt: "loop?" }, ctx);
 	expect(result.details.error).toBe(true);
-	expect(result.content[0].text).toContain("AskClaudeAdvanced cannot be used when the active provider is advanced-claude-bridge");
+	expect(result.content[0].text).toContain("AskClaude cannot be used when the active provider is claude-bridge");
 	expect(claude.queries).toHaveLength(0);
 });
 
@@ -101,7 +97,7 @@ test.each([
 	try {
 		const configDir = join(project, ".omp");
 		mkdirSync(configDir);
-		writeFileSync(join(configDir, "advanced-claude-bridge.json"), JSON.stringify({ askClaude: { allowFullMode: false, defaultMode } }));
+		writeFileSync(join(configDir, "claude-bridge.json"), JSON.stringify({ askClaude: { allowFullMode: false, defaultMode } }));
 		const registration: Pick<ExtensionAPI, "zod" | "on" | "registerProvider" | "registerTool"> = {
 			zod: z,
 			on() {},

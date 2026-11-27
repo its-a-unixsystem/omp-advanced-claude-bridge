@@ -1,7 +1,7 @@
 # omp-advanced-claude-bridge
 
 Oh My Pi (OMP) extension that runs Claude Code, through the Claude Agent SDK,
-as an OMP model provider (`advanced-claude-bridge`), plus an `AskClaudeAdvanced`
+as an OMP model provider (`claude-bridge`), plus an `AskClaude`
 delegation tool. It is an independently maintained fork of
 [DevVig/omp-claude-bridge](https://github.com/DevVig/omp-claude-bridge).
 

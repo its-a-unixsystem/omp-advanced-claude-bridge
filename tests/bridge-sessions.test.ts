@@ -106,7 +106,7 @@ describe("main agent", () => {
 		expect(history.at(-1).content).toEqual([
 			{ type: "toolCall", id: "toolu_task", name: "task", arguments: { prompt: "look around" } },
 		]);
-		expect(claude.queries[0].options.mcpServers["advanced-claude-bridge-tools"]?.name).toBe("advanced-claude-bridge-tools");
+		expect(claude.queries[0].options.mcpServers["custom-tools"]?.name).toBe("custom-tools");
 		history.push(toolResult("toolu_task", "found it", "task"));
 		const reply = await run(main, history);
 		expect(text(reply)).toBe("task said: found it");
@@ -211,8 +211,8 @@ describe("subagents", () => {
 		expect(childQuery.options.resume).toBe(created[0].sessionId);
 		expect(transcriptOf(childQuery.sessionId)).toEqual(historyOf(childHistory));
 		expect(transcriptOf(mainSession)).toEqual(mainWhileWaiting);
-		expect([...child.states.keys()]).toEqual(["advanced-claude-bridge:child-sub"]);
-		expect([...main.states.keys()]).toEqual(["advanced-claude-bridge:child-main"]);
+		expect([...child.states.keys()]).toEqual(["claude-bridge:child-sub"]);
+		expect([...main.states.keys()]).toEqual(["claude-bridge:child-main"]);
 
 		mainHistory.push(toolResult("toolu_task", "found it", "task"));
 		const reply = await run(main, mainHistory);
@@ -383,7 +383,7 @@ describe("session lifecycle", () => {
 		const pending = stream(side, [user("btw?")]);
 		await claude.waitForQueries(2);
 		await settle();
-		const sideSession = side.states.get(`advanced-claude-bridge:${side.sessionId}`);
+		const sideSession = side.states.get(`claude-bridge:${side.sessionId}`);
 
 		closeAll(main.states);
 		await settle();
@@ -400,7 +400,7 @@ describe("session lifecycle", () => {
 	test("a query running when its session closes writes nothing into it", async () => {
 		const main = agent("close-then-finish");
 		await turn(main, [], "hi", "hello");
-		const session = main.states.get(`advanced-claude-bridge:${main.sessionId}`);
+		const session = main.states.get(`claude-bridge:${main.sessionId}`);
 		const go = Promise.withResolvers<void>();
 		claude.next(async function* (cc) {
 			await go.promise;
@@ -422,7 +422,7 @@ describe("session lifecycle", () => {
 	test("an aborted query writes nothing into a session closed before its cleanup", async () => {
 		const main = agent("close-after-abort");
 		await turn(main, [], "hi", "hello");
-		const session = main.states.get(`advanced-claude-bridge:${main.sessionId}`);
+		const session = main.states.get(`claude-bridge:${main.sessionId}`);
 		claude.next(async function* (cc) { await cc.closed(); });
 		const controller = new AbortController();
 		const pending = stream(main, [user("hi"), assistant("hello"), user("long task")], { signal: controller.signal });
@@ -478,7 +478,7 @@ describe("session lifecycle", () => {
 		for (const state of [...main.states.values()]) state.releaseSession?.(side.sessionId);
 		await settle();
 		expect(sideQuery.isClosed).toBe(true);
-		expect([...main.states.keys()]).toEqual(["advanced-claude-bridge:release-side"]);
+		expect([...main.states.keys()]).toEqual(["claude-bridge:release-side"]);
 		expect(sessionState(main)).toEqual(mainBefore);
 
 		const mark = sessionCalls.length;

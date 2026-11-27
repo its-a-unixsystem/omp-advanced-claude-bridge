@@ -50,9 +50,9 @@ test("legacy opt-out keeps the Claude Code preset and source fallback without fo
 });
 
 test("invalid configured presets warn and fall back, while null survives parsing", (t) => {
-	const dir = mkdtempSync(join(tmpdir(), "advanced-claude-bridge-prompt-"));
+	const dir = mkdtempSync(join(tmpdir(), "claude-bridge-prompt-"));
 	t.after(() => rmSync(dir, { recursive: true, force: true }));
-	const path = join(dir, "advanced-claude-bridge.json");
+	const path = join(dir, "claude-bridge.json");
 	const warn = t.mock.method(console, "error", () => {});
 	for (const appendSystemPrompt of [false, true]) {
 		writeFileSync(path, JSON.stringify({ provider: { systemPromptPreset: true, appendSystemPrompt } }));
@@ -61,7 +61,7 @@ test("invalid configured presets warn and fall back, while null survives parsing
 		assert.equal(buildProviderPrompt(prompt, provider).forwardsSystemPrompt, appendSystemPrompt);
 	}
 	assert.equal(warn.mock.callCount(), 2);
-	assert.match(warn.mock.calls[0].arguments[0], /^advanced-claude-bridge\.json: ignoring invalid provider\.systemPromptPreset.*expected "claude_code", false, or null/);
+	assert.match(warn.mock.calls[0].arguments[0], /^claude-bridge\.json: ignoring invalid provider\.systemPromptPreset.*expected "claude_code", false, or null/);
 	assert.ok(warn.mock.calls[0].arguments[0].includes(path));
 	writeFileSync(path, JSON.stringify({ provider: { systemPromptPreset: null, appendSystemPrompt: false } }));
 	assert.equal(buildProviderPrompt(prompt, tryParseJson(path).provider).systemPrompt, joined);

@@ -33,8 +33,8 @@ test("an existing conversation keeps signed thinking from the old provider ID", 
 	const answer = assistant("We picked the first option.");
 	const prior = {
 		...answer,
-		api: "claude-bridge",
-		provider: "claude-bridge",
+		api: "advanced-claude-bridge",
+		provider: "advanced-claude-bridge",
 		content: [{ type: "thinking", thinking: "Compare the options.", thinkingSignature: "old-signature" }, ...answer.content],
 	};
 	await turn(main, [user("Which option?"), prior], "Continue.", "Next step.");
@@ -73,7 +73,7 @@ test("persisted provider mappings survive shutdown and OMP restarts", async () =
 	const history = await turn(main, [], "persist", "answer");
 	const session = sessionState(main).sessionId;
 	const before = transcriptOf(session);
-	const path = join(getAgentDir(), "advanced-claude-bridge", "sessions", `${main.sessionId}.json`);
+	const path = join(getAgentDir(), "claude-bridge", "sessions", `${main.sessionId}.json`);
 	expect(readFileSync(path, "utf8")).toContain(session);
 	expect(statSync(path).mode & 0o777).toBe(0o600);
 	await emit("session_shutdown", {}, ctx);
@@ -90,7 +90,7 @@ test("primary branches persist independently, and corrupt mappings rebuild from 
 	await emit("session_start", {}, extensionContext({ sessionId: main.sessionId }));
 	const history = await turn(main, [], "one", "original");
 	const original = sessionState(main).sessionId;
-	const directory = join(getAgentDir(), "advanced-claude-bridge", "sessions");
+	const directory = join(getAgentDir(), "claude-bridge", "sessions");
 	const mainMapping = join(directory, `${main.sessionId}.json`);
 	const before = readFileSync(mainMapping, "utf8");
 	const files = readdirSync(directory);

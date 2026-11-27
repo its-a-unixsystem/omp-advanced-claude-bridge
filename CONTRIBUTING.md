@@ -28,7 +28,7 @@ omp plugin link ./omp-advanced-claude-bridge  # Run from the parent directory.
 Enable debug logging while iterating:
 
 ```bash
-CLAUDE_BRIDGE_DEBUG=1 omp models advanced-claude-bridge
+CLAUDE_BRIDGE_DEBUG=1 omp models claude-bridge
 # logs -> ~/.omp/agent/claude-bridge.log
 ```
 

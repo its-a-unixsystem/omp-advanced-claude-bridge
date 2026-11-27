@@ -19,8 +19,8 @@ test("each provider sessionId owns its Claude Code session", () => {
 	assert.equal(bridgeSession("main", mainStates), main);
 	assert.notEqual(side, main);
 	assert.notEqual(child, main);
-	assert.deepEqual([...mainStates.keys()], ["advanced-claude-bridge:main", "advanced-claude-bridge:main:side:1"]);
-	assert.deepEqual([...childStates.keys()], ["advanced-claude-bridge:child"]);
+	assert.deepEqual([...mainStates.keys()], ["claude-bridge:main", "claude-bridge:main:side:1"]);
+	assert.deepEqual([...childStates.keys()], ["claude-bridge:child"]);
 
 	main.state = { ...synced, sessionId: "cc-main" };
 	child.state = { ...synced, sessionId: "cc-child" };
@@ -36,7 +36,7 @@ test("a request without the agent's providerSessionState owns no session", () =>
 	const main = bridgeSession("helped", states);
 	assert.equal(bridgeSession("helped", undefined), null);
 	assert.equal(bridgeSession(undefined, states), null);
-	assert.deepEqual([...states.keys()], ["advanced-claude-bridge:helped"]);
+	assert.deepEqual([...states.keys()], ["claude-bridge:helped"]);
 	main.close();
 });
 
@@ -122,6 +122,6 @@ test("releasing a side request closes only its own session and drops it from the
 	assert.equal(side.closed, true);
 	assert.equal(main.closed, false);
 	assert.equal(main.state, synced);
-	assert.deepEqual([...states.keys()], ["advanced-claude-bridge:rel"]);
+	assert.deepEqual([...states.keys()], ["claude-bridge:rel"]);
 	main.close();
 });

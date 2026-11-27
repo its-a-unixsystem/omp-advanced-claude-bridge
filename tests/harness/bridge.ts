@@ -57,7 +57,7 @@ activateBridge({
 	zod: z,
 } as any);
 
-export const PROVIDER_ID = "advanced-claude-bridge";
+export const PROVIDER_ID = "claude-bridge";
 const provider = providers.get(PROVIDER_ID);
 
 const registered = provider.models.find((m: any) => m.id.includes("sonnet")) ?? provider.models[0];
@@ -85,7 +85,7 @@ export async function emit(event: string, payload: Record<string, unknown> = {},
 }
 
 export function askClaudeTool() {
-	return tools.get("AskClaudeAdvanced");
+	return tools.get("AskClaude");
 }
 
 await emit("session_start");

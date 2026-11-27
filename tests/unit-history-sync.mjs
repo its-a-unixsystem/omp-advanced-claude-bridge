@@ -15,7 +15,7 @@ const nativeImage = { type: "image", source: { type: "base64", media_type: image
 const user = content => ({ role: "user", content, timestamp: clock++ });
 const developer = content => ({ role: "developer", content, synthetic: true, timestamp: clock++ });
 const assistant = (...content) => ({
-	role: "assistant", provider: "advanced-claude-bridge", api: "claude-agent-sdk",
+	role: "assistant", provider: "claude-bridge", api: "claude-agent-sdk",
 	content, stopReason: "stop", timestamp: clock++,
 });
 const call = (id, args = { command: "make" }) => ({ type: "toolCall", name: "bash", id, arguments: args });

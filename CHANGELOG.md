@@ -21,11 +21,6 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Ported the provider and AskClaude renderer to Oh My Pi 19.2.1. The bridge
   now uses OMP's bundled catalog, native streaming and tool-schema APIs, and
   reactive text nodes for AskClaude's call and result previews.
-- Breaking: use `advanced-claude-bridge/<model>` for saved model selections
-  and `advanced-claude-bridge.json` for global and project configuration.
-  The SDK MCP server is now `advanced-claude-bridge-tools`, and the default
-  delegation tool is `AskClaudeAdvanced`. See the
-  [migration guide](README.md#migrating-from-the-old-names) for side-by-side use.
 - Removed the `change-case` runtime dependency; the direct Anthropic SDK
   dependency is now used only for development types.
 - Use Claude Code's default output style and disable auto-memory for provider
@@ -43,7 +38,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   subagents and `/btw` side requests no longer overwrite the main agent's
   session state, get their prior history imported, and replay deferred steers
   against their own session.
-- Isolated helper requests and AskClaudeAdvanced do not change the primary
+- Isolated helper requests and AskClaude do not change the primary
   session's transcript or saved mapping.
 - Read SDK rate-limit utilization as a fraction and resets as Unix seconds.
 - Normalize model-specific rate-limit headers and keep buffered events with

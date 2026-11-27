@@ -39,10 +39,6 @@ This fork
     - Rewrote the session and query core so each OMP provider session owns its
       own Claude Code session, history sync, and deferred steer replay,
       preventing subagents and side requests from sharing the main agent's state.
-    - Namespaced the provider (`advanced-claude-bridge`), config file
-      (`advanced-claude-bridge.json`), MCP tool server
-      (`advanced-claude-bridge-tools`), and delegation tool
-      (`AskClaudeAdvanced`) so the fork can run alongside upstream.
     - Hardened Claude Agent SDK error handling, abort checks, and signed
       thinking history import.
 

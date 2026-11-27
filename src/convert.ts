@@ -3,7 +3,7 @@
 
 import type { Message as PiMessage } from "@oh-my-pi/pi-ai";
 import type { ContentBlock, ImageBlock, Message as SessionMessage, TextBlock, ToolResultBlock } from "cc-session-io";
-export const PROVIDER_ID = "advanced-claude-bridge";
+export const PROVIDER_ID = "claude-bridge";
 
 /** Roles Claude Code receives as a user turn. OMP sends `developer` messages
  *  (reminders, synthetic continues) as user turns on its own Anthropic provider too. */
@@ -106,8 +106,8 @@ export function convertPiMessages(
 					blocks.push({ type: "text", text: block.text });
 				} else if (block.type === "thinking") {
 					const sig = block.thinkingSignature;
-					// The old provider ID can still occur in saved transcripts.
-					const isAnthropicProvider = msg.api === "anthropic-messages" || msg.provider === PROVIDER_ID || msg.provider === "claude-bridge";
+					// Saved transcripts from earlier versions may use the previous provider ID.
+					const isAnthropicProvider = msg.api === "anthropic-messages" || msg.provider === PROVIDER_ID || msg.provider === "advanced-claude-bridge";
 					if (isAnthropicProvider && sig) {
 						blocks.push({ type: "thinking", thinking: block.thinking ?? "", signature: sig });
 					}

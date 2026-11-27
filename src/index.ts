@@ -1430,7 +1430,7 @@ export default function (pi: ExtensionAPI) {
 	};
 	const registeredModels = buildVariantModels(MODELS, longContextSettings);
 
-	const store = new SessionStore(join(getAgentDir(), "advanced-claude-bridge", "sessions"), error => debug("session store:", error));
+	const store = new SessionStore(join(getAgentDir(), PROVIDER_ID, "sessions"), error => debug("session store:", error));
 	let primaryId: string | undefined;
 	let branchSource: string | undefined;
 	const setPrimary = (ctx: ExtensionContext, branch = false) => {
@@ -1479,7 +1479,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	const askConf = config.askClaude;
-	const askClaudeToolName = askConf?.name ?? "AskClaudeAdvanced";
+	const askClaudeToolName = askConf?.name ?? "AskClaude";
 	pi.registerProvider(PROVIDER_ID, {
 		baseUrl: `https://${PROVIDER_ID}.invalid`,
 		apiKey: "not-used",

@@ -1,5 +1,5 @@
 // User-facing extension config. Loaded once at extension registration from
-// ~/.omp/agent/advanced-claude-bridge.json and the project OMP config directory, project
+// ~/.omp/agent/claude-bridge.json and the project OMP config directory, project
 // overriding global. Missing or unparseable files are ignored (error to
 // console.error, empty object returned) so the extension always starts.
 
@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 
-const CONFIG_FILE_NAME = "advanced-claude-bridge.json";
+const CONFIG_FILE_NAME = "claude-bridge.json";
 
 export interface Config {
 	askClaude?: {
