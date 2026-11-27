@@ -189,7 +189,7 @@ You can also name the tool in a skill or AGENTS.md: *"Call AskClaude to review t
 
 ## Configuration reference
 
-The extension reads `~/.omp/agent/claude-bridge.json` and the project's `.omp/claude-bridge.json`. Project settings override global settings. Start with [`claude-bridge.example.json`](claude-bridge.example.json).
+Configuration is optional — the extension works out of the box with sensible defaults and does not auto-create a config file. If you want to override any setting below, create `~/.omp/agent/claude-bridge.json` (global) or `.omp/claude-bridge.json` (project, overrides global). You can start from [`claude-bridge.example.json`](claude-bridge.example.json).
 
 ```json
 {
@@ -289,9 +289,9 @@ This project is a **fork** with the following lineage:
 
 See [NOTICE](NOTICE) for full attribution.
 
-> Anthropic [announced and then unannounced](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan) a change to how Agent-SDK tool usage is billed. As of June 15, 2026 it uses your subscription quota just like Claude Code direct.
+> **Billing & quota:** When signed into a Claude subscription (Pro / Max / Team), the Claude Agent SDK draws from your plan's standard usage limits just like interactive Claude Code (unless you explicitly route traffic through a Claude Console API key — see [Anthropic's Agent SDK plan guide](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)).
 >
-> To avoid Anthropic's higher 5-hour session-limit metering on the Agent SDK's default `sdk-ts` entrypoint ([anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074)), the bridge sets `CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge` on every spawned Claude Code subprocess (overriding any inherited host value).
+> Because the Agent SDK's default `sdk-ts` entrypoint drains the 5-hour session limit faster than interactive use ([anthropics/claude-code#97074](https://github.com/anthropics/claude-code/issues/97074)), this bridge sets `CLAUDE_CODE_ENTRYPOINT=omp-claude-bridge` on every spawned Claude Code subprocess.
 
 ## License
 
